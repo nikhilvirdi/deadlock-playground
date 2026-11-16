@@ -1,6 +1,7 @@
 package com.deadlocksim.api;
 
 import com.deadlocksim.engine.SimulationEngine;
+import com.deadlocksim.engine.SimulationException;
 import com.deadlocksim.model.Graph;
 import com.deadlocksim.model.Operation;
 import com.deadlocksim.model.OperationType;
@@ -8,7 +9,6 @@ import com.deadlocksim.model.PreventionToggles;
 import com.deadlocksim.model.Process;
 import com.deadlocksim.model.Resource;
 import com.deadlocksim.model.Scenario;
-import com.deadlocksim.model.history.HistoryEvent;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -17,10 +17,11 @@ import com.google.gson.JsonObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
+import java.util.Locale;
 import java.util.Set;
+
+import static com.deadlocksim.api.ApiInput.*;
 
 public class JsonMapper {
     private static final Gson GSON = new Gson();
@@ -36,56 +37,44 @@ public class JsonMapper {
         if (body.has("preset")) {
             throw new IllegalArgumentException("Preset not available yet");
         }
-        if (!body.has("name") || body.get("name").getAsString().isBlank()) {
-            throw new IllegalArgumentException("Scenario name must not be blank");
-        }
-        Scenario s = new Scenario(body.get("name").getAsString());
+        Scenario s = new Scenario(text(body, "name"));
+        s.setBankersAvoidance(flag(body, "bankersAvoidance"));
 
-        if (body.has("prevention") && body.get("prevention").isJsonObject()) {
-            JsonObject prev = body.getAsJsonObject("prevention");
+        if (body.has("prevention")) {
+            JsonObject prev = object(body.get("prevention"), "prevention");
             PreventionToggles toggles = s.getPreventionToggles();
-            if (prev.has("mutualExclusion")) {
-                toggles.setMutualExclusion(prev.get("mutualExclusion").getAsBoolean());
-            }
-            if (prev.has("holdAndWait")) {
-                toggles.setHoldAndWait(prev.get("holdAndWait").getAsBoolean());
-            }
-            if (prev.has("noPreemption")) {
-                toggles.setNoPreemption(prev.get("noPreemption").getAsBoolean());
-            }
-            if (prev.has("circularWait")) {
-                toggles.setCircularWait(prev.get("circularWait").getAsBoolean());
-            }
+            toggles.setMutualExclusion(flag(prev, "mutualExclusion"));
+            toggles.setHoldAndWait(flag(prev, "holdAndWait"));
+            toggles.setNoPreemption(flag(prev, "noPreemption"));
+            toggles.setCircularWait(flag(prev, "circularWait"));
             s.setPreventionToggles(toggles);
         }
 
-        if (body.has("resources") && body.get("resources").isJsonArray()) {
-            for (JsonElement el : body.getAsJsonArray("resources")) {
-                JsonObject rObj = el.getAsJsonObject();
-                String id = rObj.get("id").getAsString();
-                int total = rObj.get("total").getAsInt();
-                boolean shareable = rObj.has("shareable") && rObj.get("shareable").getAsBoolean();
-                s.addResource(new Resource(id, total, shareable));
-            }
+        for (JsonElement el : array(body, "resources", MAX_RESOURCES)) {
+            JsonObject resource = object(el, "resources");
+            s.addResource(new Resource(text(resource, "id"), integer(resource, "total", 1, MAX_INSTANCES),
+                    flag(resource, "shareable")));
         }
 
-        if (body.has("processes") && body.get("processes").isJsonArray()) {
-            for (JsonElement el : body.getAsJsonArray("processes")) {
-                JsonObject pObj = el.getAsJsonObject();
-                String pid = pObj.get("id").getAsString();
-                int priority = pObj.has("priority") ? pObj.get("priority").getAsInt() : 1;
-                s.addProcess(new Process(pid, priority));
-
-                if (pObj.has("operations") && pObj.get("operations").isJsonArray()) {
-                    for (JsonElement opEl : pObj.getAsJsonArray("operations")) {
-                        JsonObject opObj = opEl.getAsJsonObject();
-                        String typeStr = opObj.get("type").getAsString();
-                        OperationType type = OperationType.valueOf(typeStr.toUpperCase());
-                        String resId = opObj.get("resource").getAsString();
-                        int count = opObj.has("count") ? opObj.get("count").getAsInt() : 1;
-                        s.addOperation(new Operation(pid, type, resId, count));
-                    }
-                }
+        int remainingOperations = MAX_OPERATIONS;
+        for (JsonElement el : array(body, "processes", MAX_PROCESSES)) {
+            JsonObject process = object(el, "processes");
+            String id = text(process, "id");
+            int priority = process.has("priority")
+                    ? integer(process, "priority", Integer.MIN_VALUE, Integer.MAX_VALUE) : 1;
+            s.addProcess(new Process(id, priority));
+            if (!process.has("operations")) continue;
+            JsonArray operations = array(process, "operations", remainingOperations);
+            remainingOperations -= operations.size();
+            for (JsonElement item : operations) {
+                JsonObject operation = object(item, "operations");
+                OperationType type = switch (text(operation, "type").toUpperCase(Locale.ROOT)) {
+                    case "REQUEST" -> OperationType.REQUEST;
+                    case "RELEASE" -> OperationType.RELEASE;
+                    default -> throw new IllegalArgumentException("Operation type must be REQUEST or RELEASE");
+                };
+                int count = operation.has("count") ? integer(operation, "count", 1, Integer.MAX_VALUE) : 1;
+                s.addOperation(new Operation(id, type, text(operation, "resource"), count));
             }
         }
 
@@ -93,14 +82,15 @@ public class JsonMapper {
     }
 
     public static JsonObject mapState(SimulationEngine engine) {
-        if (engine == null || engine.getScenario() == null) {
-            throw new IllegalStateException("No scenario loaded");
+        Scenario scenario = engine == null ? null : engine.getScenario();
+        if (scenario == null) {
+            throw new SimulationException(SimulationException.Kind.NO_SCENARIO, "No scenario loaded");
         }
-        Scenario scenario = engine.getScenario();
         JsonObject root = new JsonObject();
 
         JsonObject scenarioObj = new JsonObject();
         scenarioObj.addProperty("name", scenario.getName());
+        scenarioObj.addProperty("bankersAvoidance", scenario.isBankersAvoidance());
         root.add("scenario", scenarioObj);
 
         root.addProperty("step", engine.getViewedSeq());
@@ -144,10 +134,7 @@ public class JsonMapper {
                 procObj.add("waitingFor", JsonNull.INSTANCE);
             }
 
-            List<Operation> ops = scenario.getOperations(p.getId());
-            int totalOps = ops != null ? ops.size() : 0;
-            int nextIndex = p.getNextOperationIndex();
-            int pending = Math.max(0, totalOps - nextIndex);
+            int pending = p.isTerminal() ? 0 : Math.max(0, scenario.getOperations(p.getId()).size() - p.getNextOperationIndex());
             procObj.addProperty("pendingOperations", pending);
 
             processesArray.add(procObj);
@@ -167,13 +154,7 @@ public class JsonMapper {
         root.add("resources", resourcesArray);
 
         Graph graph = new Graph(scenario);
-        List<List<String>> cycles = graph.findCycles();
-        Set<String> cycleEdges = new HashSet<>();
-        for (List<String> cycle : cycles) {
-            for (int i = 0; i < cycle.size() - 1; i++) {
-                cycleEdges.add(cycle.get(i) + "->" + cycle.get(i + 1));
-            }
-        }
+        Set<Graph.Edge> cycleEdges = graph.cycleEdges();
 
         JsonObject graphObj = new JsonObject();
         JsonArray nodesArray = new JsonArray();
@@ -209,7 +190,7 @@ public class JsonMapper {
             data.addProperty("source", edge.getFrom());
             data.addProperty("target", edge.getTo());
             data.addProperty("kind", edge.getKind().name().toLowerCase());
-            boolean inCycle = cycleEdges.contains(edge.getFrom() + "->" + edge.getTo());
+            boolean inCycle = cycleEdges.contains(edge);
             data.addProperty("inCycle", inCycle);
             edgeObj.add("data", data);
             edgesArray.add(edgeObj);

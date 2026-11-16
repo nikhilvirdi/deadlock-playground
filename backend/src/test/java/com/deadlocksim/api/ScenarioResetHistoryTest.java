@@ -17,6 +17,7 @@ import java.net.http.HttpResponse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScenarioResetHistoryTest {
@@ -149,7 +150,28 @@ class ScenarioResetHistoryTest {
         assertEquals(200, response.statusCode());
         JsonObject root = gson.fromJson(response.body(), JsonObject.class);
         assertTrue(root.get("ok").getAsBoolean());
-        assertNotNull(root.getAsJsonObject("data").getAsJsonObject("state"));
+        assertTrue(root.getAsJsonObject("data").get("state").isJsonNull());
+        assertNull(engine.getScenario());
+        assertTrue(engine.getHistoryEvents().isEmpty());
+
+        HttpRequest stateRequest = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + boundPort + "/api/state"))
+                .GET()
+                .build();
+        HttpResponse<String> stateResponse = client.send(stateRequest, HttpResponse.BodyHandlers.ofString());
+        assertEquals(409, stateResponse.statusCode());
+
+        HttpRequest historyRequest = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + boundPort + "/api/history"))
+                .GET()
+                .build();
+        HttpResponse<String> historyResponse = client.send(historyRequest, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, historyResponse.statusCode());
+        JsonObject historyRoot = gson.fromJson(historyResponse.body(), JsonObject.class);
+        assertEquals(0, historyRoot.getAsJsonObject("data").getAsJsonArray("events").size());
+
+        configureSimpleScenario();
+        assertNotNull(engine.getScenario());
     }
 
     @Test
@@ -191,7 +213,7 @@ class ScenarioResetHistoryTest {
         assertTrue(root.get("ok").getAsBoolean());
 
         JsonArray events = root.getAsJsonObject("data").getAsJsonArray("events");
-        assertEquals(3, events.size()); // 0: STATE_CHANGE, 1: AVOIDANCE_CHECK, 2: GRANT
+        assertEquals(2, events.size());
 
         JsonObject ev0 = events.get(0).getAsJsonObject();
         assertEquals(0, ev0.get("seq").getAsInt());
@@ -200,11 +222,7 @@ class ScenarioResetHistoryTest {
 
         JsonObject ev1 = events.get(1).getAsJsonObject();
         assertEquals(1, ev1.get("seq").getAsInt());
-        assertEquals("AVOIDANCE_CHECK", ev1.get("type").getAsString());
-
-        JsonObject ev2 = events.get(2).getAsJsonObject();
-        assertEquals(2, ev2.get("seq").getAsInt());
-        assertEquals("GRANT", ev2.get("type").getAsString());
+        assertEquals("GRANT", ev1.get("type").getAsString());
     }
 
     private void configureSimpleScenario() throws IOException, InterruptedException {

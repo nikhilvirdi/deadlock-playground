@@ -12,6 +12,8 @@ public enum ErrorCode {
     NOT_FOUND(404),
     METHOD_NOT_ALLOWED(405),
     NO_SCENARIO(409),
+    HISTORY_LIMIT(409),
+    PAYLOAD_TOO_LARGE(413),
     INTERNAL_ERROR(500);
 
     private final int httpStatus;

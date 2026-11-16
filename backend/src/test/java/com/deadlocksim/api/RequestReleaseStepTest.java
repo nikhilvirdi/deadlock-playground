@@ -136,29 +136,67 @@ class RequestReleaseStepTest {
     }
 
     @Test
-    void requestDeniedUnsafe() throws IOException, InterruptedException {
-        Scenario scenario = new Scenario("Unsafe Test");
-        Resource r1 = new Resource("R1", 2, false);
-        scenario.addResource(r1);
+    void bankersModeUsesDeclaredClaimsAndDemoModeAllowsTheSameUnsafeGrant() throws IOException, InterruptedException {
+        String scenario = """
+                {
+                  "name": "Future demand",
+                  "bankersAvoidance": %s,
+                  "resources": [{"id":"A","total":1},{"id":"B","total":1}],
+                  "processes": [
+                    {"id":"P1","operations":[{"type":"REQUEST","resource":"A"},{"type":"REQUEST","resource":"B"}]},
+                    {"id":"P2","operations":[{"type":"REQUEST","resource":"B"},{"type":"REQUEST","resource":"A"}]},
+                    {"id":"P3"}
+                  ]
+                }
+                """;
+        assertEquals(200, postJson("/api/scenario", scenario.formatted(true)).statusCode());
+        assertEquals(200, postJson("/api/step", "{}").statusCode());
 
-        Process p1 = new Process("P1", 1);
-        Process p2 = new Process("P2", 2);
-        p2.setState(ProcessState.WAITING);
-        p2.setWaitingFor("R1", 5);
-
-        scenario.addProcess(p1);
-        scenario.addProcess(p2);
-        engine.configure(scenario);
-
-        HttpResponse<String> response = postJson("/api/request", "{\"process\": \"P1\", \"resource\": \"R1\", \"count\": 1}");
-
-        assertEquals(200, response.statusCode());
-        JsonObject root = gson.fromJson(response.body(), JsonObject.class);
-        assertTrue(root.get("ok").getAsBoolean());
-        JsonObject data = root.getAsJsonObject("data");
+        HttpResponse<String> denied = postJson("/api/request", """
+                {"process":"P2","resource":"B","count":1}
+                """);
+        assertEquals(200, denied.statusCode());
+        JsonObject data = gson.fromJson(denied.body(), JsonObject.class).getAsJsonObject("data");
         assertEquals("DENIED_UNSAFE", data.get("outcome").getAsString());
-        assertTrue(data.get("safety").isJsonNull());
+        assertFalse(data.getAsJsonObject("safety").get("safe").getAsBoolean());
+        assertTrue(data.getAsJsonObject("safety").get("sequence").isJsonNull());
         assertTrue(data.get("reason").getAsString().contains("Unsafe state"));
+        JsonObject state = data.getAsJsonObject("state");
+        assertTrue(state.getAsJsonObject("scenario").get("bankersAvoidance").getAsBoolean());
+        assertEquals(1, state.getAsJsonArray("resources").get(1).getAsJsonObject().get("available").getAsInt());
+        assertEquals(0, state.getAsJsonArray("processes").get(1).getAsJsonObject().getAsJsonArray("held").size());
+
+        HttpResponse<String> unknownClaim = postJson("/api/request", """
+                {"process":"P3","resource":"B","count":1}
+                """);
+        assertEquals(400, unknownClaim.statusCode());
+        assertTrue(unknownClaim.body().contains("declared claim"));
+
+        assertEquals(200, postJson("/api/step", "{}").statusCode());
+        assertEquals(0, engine.getScenario().getProcesses().get(1).getNextOperationIndex());
+        assertEquals(200, postJson("/api/release", """
+                {"process":"P2","resource":"B","count":1}
+                """).statusCode());
+        HttpResponse<String> safe = postJson("/api/request", """
+                {"process":"P2","resource":"B","count":1}
+                """);
+        JsonObject safeData = gson.fromJson(safe.body(), JsonObject.class).getAsJsonObject("data");
+        assertEquals("GRANTED", safeData.get("outcome").getAsString());
+        assertEquals("P2", safeData.getAsJsonObject("safety").getAsJsonArray("sequence").get(0).getAsString());
+
+        assertEquals(200, postJson("/api/scenario", scenario.formatted(false)).statusCode());
+        assertEquals(200, postJson("/api/step", "{}").statusCode());
+        HttpResponse<String> demo = postJson("/api/request", """
+                {"process":"P2","resource":"B","count":1}
+                """);
+        JsonObject demoData = gson.fromJson(demo.body(), JsonObject.class).getAsJsonObject("data");
+        assertEquals("GRANTED", demoData.get("outcome").getAsString());
+        assertTrue(demoData.get("safety").isJsonNull());
+        assertEquals(200, postJson("/api/step", "{}").statusCode());
+        assertEquals(200, postJson("/api/request", """
+                {"process":"P2","resource":"A","count":1}
+                """).statusCode());
+        assertTrue(engine.detect().result().isDeadlocked());
     }
 
     @Test

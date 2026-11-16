@@ -201,20 +201,17 @@ class DetectRecoverEndpointTest {
     }
 
     @Test
-    void recoverWithPreemptWhenPreemptionOffReturnsPreemptionError() throws IOException, InterruptedException {
+    void explicitPreemptRecoveryWorksWithPreventionOff() throws IOException, InterruptedException {
         setupTwoProcessDeadlock(false);
 
-        String recoverJson = """
+        HttpResponse<String> response = postJson("/api/recover", """
                 { "policy": "RECOVERY_COST", "strategy": "PREEMPT" }
-                """;
-        HttpResponse<String> response = postJson("/api/recover", recoverJson);
+                """);
 
-        assertEquals(400, response.statusCode());
-        JsonObject root = gson.fromJson(response.body(), JsonObject.class);
-        assertFalse(root.get("ok").getAsBoolean());
-        JsonObject error = root.getAsJsonObject("error");
-        assertEquals("PREVENTION_VIOLATION", error.get("code").getAsString());
-        assertTrue(error.get("message").getAsString().contains("Preemption is disabled"));
+        assertEquals(200, response.statusCode());
+        JsonObject data = gson.fromJson(response.body(), JsonObject.class).getAsJsonObject("data");
+        assertTrue(data.get("resolved").getAsBoolean());
+        assertEquals("PREEMPT", data.getAsJsonArray("rounds").get(0).getAsJsonObject().get("strategy").getAsString());
     }
 
     @Test

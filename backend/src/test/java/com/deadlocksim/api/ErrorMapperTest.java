@@ -1,6 +1,9 @@
 package com.deadlocksim.api;
 
 import com.deadlocksim.engine.SimulationEngine;
+import com.deadlocksim.engine.SimulationException;
+import com.deadlocksim.model.Process;
+import com.deadlocksim.model.Resource;
 import com.deadlocksim.model.Scenario;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -66,7 +69,7 @@ class ErrorMapperTest {
         startServerWithEngine(new SimulationEngine() {
             @Override
             public Scenario getScenario() {
-                throw new IllegalStateException("Preemption is disabled");
+                throw new SimulationException(SimulationException.Kind.PREVENTION_VIOLATION, "Preemption is disabled");
             }
         });
 
@@ -82,7 +85,7 @@ class ErrorMapperTest {
         startServerWithEngine(new SimulationEngine() {
             @Override
             public Scenario getScenario() {
-                throw new IllegalStateException("Victim holds no resources to preempt");
+                throw new SimulationException(SimulationException.Kind.PREEMPTION_VIOLATION, "Victim holds no resources to preempt");
             }
         });
 
@@ -99,7 +102,7 @@ class ErrorMapperTest {
         startServerWithEngine(new SimulationEngine() {
             @Override
             public Scenario getScenario() {
-                throw new IllegalStateException("Process P1 holds only 0 of R1");
+                throw new SimulationException(SimulationException.Kind.NOT_HELD, "Process P1 holds only 0 of R1");
             }
         });
 
@@ -111,19 +114,12 @@ class ErrorMapperTest {
     }
 
     @Test
-    void noOperationsTriggeredThroughHttp() throws IOException, InterruptedException {
-        startServerWithEngine(new SimulationEngine() {
-            @Override
-            public Scenario getScenario() {
-                throw new IllegalStateException("No operations pending");
-            }
-        });
-
-        HttpResponse<String> response = sendGet("/api/state");
-        assertEquals(400, response.statusCode());
-        JsonObject body = gson.fromJson(response.body(), JsonObject.class);
+    void noOperationsRetainsItsExplicitErrorEnvelope() {
+        JsonObject body = ErrorMapper.toJsonObject(ErrorCode.NO_OPERATIONS, "No operations pending");
+        assertEquals(400, ErrorCode.NO_OPERATIONS.getHttpStatus());
         assertFalse(body.get("ok").getAsBoolean());
         assertEquals("NO_OPERATIONS", body.getAsJsonObject("error").get("code").getAsString());
+        assertEquals("No operations pending", body.getAsJsonObject("error").get("message").getAsString());
     }
 
     @Test
@@ -131,7 +127,7 @@ class ErrorMapperTest {
         startServerWithEngine(new SimulationEngine() {
             @Override
             public Scenario getScenario() {
-                throw new IllegalStateException("No deadlock to recover from");
+                throw new SimulationException(SimulationException.Kind.NO_DEADLOCK, "No deadlock to recover from");
             }
         });
 
@@ -144,14 +140,8 @@ class ErrorMapperTest {
 
     @Test
     void invalidPolicyTriggeredThroughHttp() throws IOException, InterruptedException {
-        startServerWithEngine(new SimulationEngine() {
-            @Override
-            public Scenario getScenario() {
-                throw new IllegalStateException("Unknown policy: RANDOM");
-            }
-        });
-
-        HttpResponse<String> response = sendGet("/api/state");
+        startServerWithEngine(new SimulationEngine());
+        HttpResponse<String> response = sendPost("/api/recover", "{\"policy\":\"RANDOM\",\"strategy\":\"TERMINATE\"}");
         assertEquals(400, response.statusCode());
         JsonObject body = gson.fromJson(response.body(), JsonObject.class);
         assertFalse(body.get("ok").getAsBoolean());
@@ -160,14 +150,13 @@ class ErrorMapperTest {
 
     @Test
     void invalidHistoryIndexTriggeredThroughHttp() throws IOException, InterruptedException {
-        startServerWithEngine(new SimulationEngine() {
-            @Override
-            public Scenario getScenario() {
-                throw new IllegalStateException("Invalid history index: 99");
-            }
-        });
-
-        HttpResponse<String> response = sendGet("/api/state");
+        SimulationEngine engine = new SimulationEngine();
+        Scenario scenario = new Scenario("History");
+        scenario.addProcess(new Process("P", 1));
+        scenario.addResource(new Resource("R", 1, false));
+        engine.configure(scenario);
+        startServerWithEngine(engine);
+        HttpResponse<String> response = sendPost("/api/history/jump", "{\"seq\":99}");
         assertEquals(400, response.statusCode());
         JsonObject body = gson.fromJson(response.body(), JsonObject.class);
         assertFalse(body.get("ok").getAsBoolean());
@@ -226,7 +215,7 @@ class ErrorMapperTest {
         JsonObject body = gson.fromJson(response.body(), JsonObject.class);
         assertFalse(body.get("ok").getAsBoolean());
         assertEquals("INTERNAL_ERROR", body.getAsJsonObject("error").get("code").getAsString());
-        assertEquals("Unexpected database failure", body.getAsJsonObject("error").get("message").getAsString());
+        assertEquals("The simulator could not complete the request.", body.getAsJsonObject("error").get("message").getAsString());
     }
 
     @Test
@@ -244,6 +233,12 @@ class ErrorMapperTest {
         assertEquals(Set.of("code", "message"), errorObj.keySet());
         assertTrue(errorObj.get("code").isJsonPrimitive());
         assertTrue(errorObj.get("message").isJsonPrimitive());
+    }
+
+    private HttpResponse<String> sendPost(String path, String body) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + boundPort + path))
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+        return client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> sendGet(String path) throws IOException, InterruptedException {
