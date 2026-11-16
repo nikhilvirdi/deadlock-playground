@@ -10,6 +10,13 @@ This file defines the HTTP interface between the Java backend (`com.sun.net.http
 - Every mutating endpoint returns the full updated state, so the frontend never has to merge partial data.
 - Every successful response has `"ok": true`. Failed responses have `"ok": false` and an `error` object.
 
+### Input and processing limits
+
+- POST bodies are limited to 256 KiB of UTF-8 JSON. Larger bodies return HTTP 413 with `PAYLOAD_TOO_LARGE`. Integers must be JSON numbers with exact values in the signed 32-bit range. Totals and operation counts must be positive. Priorities may be negative or zero.
+- A scenario supports up to 32 processes, 32 resource types, 256 instances per resource type, and 2,048 scripted operations across all processes. Scenario names and IDs must be nonblank, at most 128 characters, and free of control characters.
+- Event history can hold up to 2,048 events. An action reserves space for its possible events before it runs and returns HTTP 409 with `HISTORY_LIMIT` if there is too little room. No snapshots are evicted. Earlier snapshots remain accessible and a successful action from an earlier snapshot can branch as usual.
+- The OpenJDK server defaults are eight request workers, 16 queued tasks, 32 connections, a five-second request timeout, and a ten-second response timeout. Request and response deadlines use built-in JVM properties and close the connection when exceeded. Saturation can still cause a dropped connection. Engine state access remains serialized.
+
 ### Error Shape
 
 ```json
@@ -28,7 +35,7 @@ Error codes:
 |---|---|
 | `VALIDATION_ERROR` | Duplicate IDs, zero instances, or a request larger than the total instances (UC1, alternate 5a). |
 | `PREVENTION_VIOLATION` | A prevention rule rejects a request (UC2, alternate 2a). |
-| `PREEMPTION_VIOLATION` | Preemption is attempted but victim holds no resources to preempt. |
+| `PREEMPTION_VIOLATION` | Reserved for preemption errors. Recovery without an eligible victim reports `resolved: false`. |
 | `NOT_HELD` | A release targets a resource the process does not hold (UC3, alternate 1a). |
 | `NO_OPERATIONS` | Step is called when the scenario is finished (UC4, alternate 2a). |
 | `NO_DEADLOCK` | Recover is called without a detected deadlock (UC6 precondition). |
@@ -41,7 +48,7 @@ Every endpoint returns this object as `data.state`. It is the single source the 
 
 ```json
 {
-  "scenario": { "name": "Textbook figure" },
+  "scenario": { "name": "Textbook figure", "bankersAvoidance": false },
   "step": 4,
   "prevention": {
     "mutualExclusion": false,
@@ -79,7 +86,7 @@ Every endpoint returns this object as `data.state`. It is the single source the 
 Field notes:
 
 - `step` is the viewed position, the sequence of the event the state corresponds to.
-- `state` is one of `RUNNING`, `WAITING`, `COMPLETED`, `TERMINATED`. `deadlocked` is a separate flag, as decided in the design.
+- `state` is one of `RUNNING`, `WAITING`, `COMPLETED`, `TERMINATED`. `deadlocked` is a separate flag. `pendingOperations` is zero for completed and terminated processes.
 - `graph` follows the Cytoscape.js `data` wrapper, so it can be passed to Cytoscape without conversion.
 - `inCycle` is true for edges that belong to a detected cycle. It is false until detection runs.
 
@@ -104,6 +111,7 @@ Request, custom scenario:
 ```json
 {
   "name": "My scenario",
+  "bankersAvoidance": false,
   "prevention": { "mutualExclusion": false, "holdAndWait": false, "noPreemption": false, "circularWait": false },
   "resources": [ { "id": "R1", "total": 1, "shareable": false } ],
   "processes": [
@@ -129,6 +137,8 @@ Response: `{ "ok": true, "data": { "state": { } } }`. History is reset, and the 
 
 Note: presets are not implemented yet and return `VALIDATION_ERROR`.
 
+`bankersAvoidance` defaults to `false` for deadlock demonstrations and is returned under `state.scenario`. Enabling it derives fixed maximum claims from the peak outstanding instance counts in each script. Manual requests exceeding a declared claim return `VALIDATION_ERROR`. Prevention flags are set through this endpoint. `noPreemption: true` means Release when blocked and leaves explicit Preempt recovery available.
+
 ### POST /api/request (UC2: Request resource)
 
 Request:
@@ -144,14 +154,14 @@ Response:
   "ok": true,
   "data": {
     "outcome": "GRANTED",
-    "reason": "Safe sequence found.",
+    "reason": "Granted 1 of R1 to P2",
     "safety": null,
     "state": { }
   }
 }
 ```
 
-`outcome` is one of `GRANTED`, `BLOCKED`, `DENIED_UNSAFE`, `REJECTED_PREVENTION`. In this version, `safety` is null. When safety analysis is returned, `safety.safe` is false, `sequence` is null, and `blockingReason` describes the process and resource that cannot finish.
+`outcome` is one of `GRANTED`, `BLOCKED`, `DENIED_UNSAFE`, `REJECTED_PREVENTION`. When the request runs a safety analysis, `safety` contains `safe`, `sequence` and `blockingReason`. A safe grant provides a sequence and a null blocking reason. An unsafe denial provides a blocking reason and a null sequence. Otherwise `safety` is null.
 
 ### POST /api/release (UC3: Release resource)
 
@@ -163,7 +173,7 @@ Request:
 
 Response: `{ "ok": true, "data": { "unblocked": ["P1"], "state": { } } }`
 
-`unblocked` lists processes that moved from Waiting to Running because of this release.
+`unblocked` lists processes whose pending requests were granted because of this release. A process that finishes its script with the grant moves directly to Completed.
 
 ### POST /api/step (UC4: Step)
 
@@ -175,7 +185,7 @@ Response:
 {
   "ok": true,
   "data": {
-    "executed": { "description": "P1 requested and was granted 1 of R1" },
+    "executed": { "description": "Granted 1 of R1 to P1" },
     "finished": false,
     "state": { }
   }
@@ -201,7 +211,7 @@ Response:
 }
 ```
 
-`strategy` is `CYCLE` for single-instance resources and `BANKERS` otherwise. `cycle` is null when no cycle exists, and it is also null for `BANKERS` when the chain is not a simple cycle. In that case `processes` still lists the blocked set.
+`strategy` is `CYCLE` for single-instance resources and `BANKERS` otherwise. `cycle` contains one cycle for a positive `CYCLE` result and is null otherwise. The `BANKERS` process list excludes waiters with zero exclusive holdings.
 
 ### POST /api/recover (UC6: Recover)
 
@@ -228,7 +238,7 @@ Response:
 }
 ```
 
-`rounds` holds one entry per victim, because alternate flow 4a can repeat recovery. `resolved` is false if the system could not clear the deadlock.
+`rounds` holds one entry per victim. Both strategies choose victims that hold a contended exclusive resource on a blocking cycle. `resolved` is false if the system could not clear the deadlock.
 
 ### POST /api/reset (UC7: Reset)
 

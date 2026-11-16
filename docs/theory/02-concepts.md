@@ -9,7 +9,7 @@ A deadlock can occur only when all four conditions hold at the same time:
 3. No preemption: a resource can be released only voluntarily by the process holding it.
 4. Circular wait: a cycle of processes exists, where each one waits for a resource held by the next.
 
-The prevention toggles in the simulator break one condition at a time.
+The prevention toggles target individual conditions. Sharing applies only to resource types that can be shared.
 
 ## Resource Allocation Graph (RAG)
 
@@ -28,19 +28,19 @@ A cycle in the RAG is necessary for deadlock. Whether it is also sufficient depe
 ## Single-Instance vs Multiple-Instance Detection
 
 - Single-instance: each resource type has exactly one instance. A cycle in the RAG is both necessary and sufficient for deadlock, so cycle detection is enough.
-- Multiple-instance: a cycle does not guarantee deadlock. The Banker's-style detection algorithm tracks available instances and checks whether every process can finish.
+- Multiple-instance: a graph cycle alone is insufficient. Detection tries to satisfy current outstanding requests with available instances and allocations that finishable processes can return. Waiters with no exclusive holdings cannot sustain a deadlock.
 
 ## Deadlock Avoidance (Banker's Algorithm)
 
-Before granting a request, the system tentatively grants it and runs the safety algorithm. The safety algorithm looks for a sequence in which every process can finish. If such a sequence exists, the grant goes ahead. If not, the request is denied and the process waits.
+When Banker's avoidance is enabled, the system tests the proposed allocation against the declared maximum claims before granting it. A safe sequence allows every unfinished process to reach its remaining claim and return its holdings. An unsafe request waits while allocations stay unchanged. Demo mode allows unsafe grants so that detection and recovery can be exercised.
 
 ## Deadlock Prevention
 
-Each prevention toggle removes one Coffman condition:
+The simulator offers four ways to target the Coffman conditions.
 
 - Mutual exclusion: mark a resource as shareable, so grants never block on it.
-- Hold and wait: a process requests all its resources up front and holds nothing if it cannot get them all.
-- No preemption: allow the system to take a resource away from a process.
+- Hold and wait: a process requests a group of resources atomically and begins that group with no holdings.
+- No preemption: Release when blocked returns a requester's holdings on a capacity shortage. The requester waits to reacquire them together with the new request.
 - Circular wait: enforce a global resource ordering. A process may only request resources ranked above the ones it already holds.
 
 ## Recovery

@@ -2,35 +2,36 @@
 
 ## Avoidance
 
-The Banker's safety check and resource-request algorithm are a core feature. A request is tentatively granted, the safety check runs, and the result is either a safe sequence or the reason the state is unsafe. If the state is unsafe, the request is denied and the process waits.
+Banker's avoidance is opt-in when configuring a scenario. With avoidance off, requests may form real deadlocks for detection and recovery exercises.
+
+With avoidance on, each process declares a fixed maximum per resource through its script. The maximum is the highest outstanding count in any prefix of the script. Requests add to the running count and releases subtract from it. A script cannot release more than it has acquired or declare a maximum above the resource capacity. A manual request must fit within the requesting process's declared maximum. A process with no declared demand for that resource must declare it in the script or use demo mode. Manual requests and releases are separate from the script and may require the user to reconcile the process's holdings before stepping further.
+
+The safety check uses the tentative allocations, the available capacity after the proposed grant, and each unfinished process's remaining claim (maximum minus allocation). It looks for an order in which each process's remaining claim fits in the working capacity and its current holdings can then be returned. This gives a conservative guarantee against the declared maximum, including when a process's upcoming instructions would need less. An unsafe request waits without changing allocations and is reconsidered after resources return. Shared resources do not consume working capacity.
 
 ## Prevention Toggles
 
-Each Coffman condition has a live switch on the current scenario:
+All four toggles are set when configuring a scenario.
 
-- Mutual exclusion: marks a resource type as shareable, so grants never block on it.
-- Hold and wait: a process must request all its resources up front, and it holds nothing if it cannot get them all.
-- Allow preemption (ON breaks the no-preemption condition): lets the system take a resource from a process by force. Preempt recovery is available only when this is ON.
-- Circular wait: enforces a global resource ordering. A process may only request a resource ranked above the ones it holds. Out-of-order requests are rejected with an explanation.
+- Mutual exclusion: shares only resource types marked shareable. Each process can hold up to that resource's configured instance count and concurrent holders do not reduce availability. Other resources continue to account for each granted instance.
+- Hold and wait: each consecutive group of scripted requests starts with no holdings and is acquired atomically. A blocked group has no partial grants. A manual request is a group of one. A further group can start after all holdings are released.
+- Release when blocked (the `noPreemption` API flag): enabling this breaks the Coffman no-preemption condition. On a capacity shortage, the requester returns its holdings and waits to reacquire them together with the new request. A demand that could never fit is rejected. With the flag off, a blocked requester keeps its holdings. An unsafe Banker denial leaves allocations intact.
+- Circular wait: resources are ranked in scenario order. Requests must be above every held resource. The same order applies within an atomic request group and to shared resources.
 
-## Victim Policies
+A manual prevention violation leaves the process unchanged. A scripted prevention violation stops the script, reports the reason, and releases the process's holdings. The rejected operations do not advance the cursor.
+
+## Detection and Recovery
+
+Single-instance detection finds cycles. Multi-instance detection reduces by actual outstanding requests and allocations. Processes with no exclusive allocations can be waiting downstream but do not enter the reduction's deadlocked set. The remaining set may include holders downstream of a cycle. Recovery follows shortages after this reduction to select only holdings on a blocking cycle.
+
+Both explicit recovery strategies are available independently of the prevention flags. Termination returns all holdings and preserves the victim's recorded progress. Preempt recovery selects a contended exclusive resource, then rolls back the victim to the beginning of its script and returns all its holdings. After every round, the engine wakes eligible waiters and detects again. Recovery reports failure if no eligible intervention remains.
 
 There are three policies, and recovery cost is the default:
 
-- Priority: the lowest-priority deadlocked process is the victim.
-- Resources held: the process holding the fewest resources is the victim, since it loses the least.
-- Recovery cost (default): the process with the lowest cost is the victim.
+- Priority: select the lowest-priority eligible process.
+- Resources held: select the eligible process holding the fewest units.
+- Recovery cost: select the eligible process with the lowest sum of held units and executed instructions.
 
-Recovery cost formula: cost = resourcesHeld + instructionsExecuted
-
-Ties go to the lower process ID.
-
-## Preemption Rules
-
-- Any resource instance held by a deadlocked process can be preempted, except a shareable resource, which cannot cause a deadlock.
-- The preempted process is rolled back to its initial state. It releases everything and restarts its request list from the beginning.
-- Checkpoint-based rollback is explained in the docs but not simulated.
-- Preemption is used only during recovery, and only when the allow-preemption toggle is ON.
+Ties go to the lower process ID. Every successful scripted request or release counts once, including a request granted later on wake-up. A granted group counts every instruction in that group. Manual actions, blocked attempts and rejected operations do not count. Rollback resets the counter, and a historical snapshot restores it.
 
 ## Execution History
 
@@ -44,8 +45,10 @@ Ties go to the lower process ID.
 
 - Running: able to proceed.
 - Waiting: blocked on a request.
-- Completed: all operations are finished.
-- Terminated: killed during recovery.
+- Completed: the final scripted operation succeeded and all remaining holdings were returned, including when a delayed grant completes the script.
+- Terminated: the process was stopped during recovery or after a scripted prevention violation. It has no holdings or runnable work, and its historical cursor is preserved.
+
+A process with no script is available for manual operations.
 
 Ready is not needed, because there is no CPU scheduler. "Deadlocked" is a flag on a process, not a state. Rollback returns a process to Running.
 

@@ -15,27 +15,27 @@ This file lists what the system must do (functional requirements) and the qualit
 
 ### Request and Release (UC2, UC3)
 
-- FR-07: A request is granted only if a free instance exists and the safety check passes.
+- FR-07: A request needs enough available capacity for exclusive resources and must pass the safety check when Banker's avoidance is enabled.
 - FR-08: A request that cannot be granted moves the process to Waiting and draws a request edge.
 - FR-09: When the safety check fails, the system shows the unsafe reasoning and denies the request.
-- FR-10: A release returns instances to the pool and moves any Waiting process that can now proceed to Running.
+- FR-10: A release returns exclusive instances to the pool and grants satisfiable waiting requests. A successful final scripted request moves the process directly to Completed.
 - FR-11: A release of a resource the process does not hold is rejected with an error.
 
 ### Avoidance and Prevention
 
-- FR-12: The system runs the Banker's safety algorithm and returns either a safe sequence or the blocking reason.
-- FR-13: Each of the four prevention toggles can be switched on or off for the current scenario.
+- FR-12: When Banker's avoidance is enabled, an attempted grant is checked against declared claims and returns a safe sequence or a blocking reason. Demo mode allows grants without that check.
+- FR-13: Each of the four prevention toggles can be set when configuring a scenario.
 - FR-14: With mutual exclusion prevention on, shareable resources never block a grant.
-- FR-15: With hold-and-wait prevention on, a process requests all its resources at the start and holds nothing if it cannot get them all.
-- FR-16: With no-preemption prevention off, the system can take a resource from a deadlocked process.
+- FR-15: With hold-and-wait prevention on, each consecutive request group starts with no holdings and is acquired atomically.
+- FR-16: With Release when blocked on, an unavailable request causes the process to return its holdings and wait to reacquire them with the new request. Explicit preemption recovery is available under either setting.
 - FR-17: With circular-wait prevention on, a request to a resource ranked at or below a held resource is rejected with an explanation.
 
 ### Simulation (UC4)
 
-- FR-18: Step executes the next pending operation in scenario order.
+- FR-18: Step executes the next pending operation in scenario order. Hold-and-wait prevention can acquire a consecutive request group in one step.
 - FR-19: Step shows a finished message and disables itself when no operations remain.
 - FR-20: If the next operation is blocked, the process moves to Waiting and the following Step continues the scenario.
-- FR-21: The process states shown are Running, Waiting, Completed, and Terminated, with a separate deadlocked flag.
+- FR-21: The process states shown are Running, Waiting, Completed, and Terminated, with a separate deadlocked flag. Completed and terminated processes release their holdings and have no runnable work.
 
 ### Detection (UC5)
 
