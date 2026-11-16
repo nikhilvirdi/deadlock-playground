@@ -48,7 +48,7 @@ export function renderGraph(state) {
     }
 
     const actualState = (state && state.state) ? state.state : state;
-    document.getElementById('graph-empty').hidden = Boolean(actualState);
+    document.getElementById('graph-empty').hidden = Boolean(actualState && actualState.scenario);
 
     if (!cy) {
         if (typeof cytoscape !== 'undefined' && typeof cytoscapeDagre !== 'undefined') {

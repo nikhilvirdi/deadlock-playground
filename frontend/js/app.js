@@ -1,6 +1,7 @@
 import {
     getState,
     configureScenario,
+    clearSavedScenarioOperations,
     reset,
     getHistory,
     requestResource,
@@ -8,8 +9,7 @@ import {
     step,
     detect,
     recover,
-    jumpToEvent,
-    setPreventionToggles
+    jumpToEvent
 } from './api/endpoints.js';
 import { renderProcessPanel } from './panels/process-panel.js';
 import { renderResourcePanel } from './panels/resource-panel.js';
@@ -17,6 +17,7 @@ import { renderConfigureForm, syncPreventionToggles } from './panels/configure-f
 import { renderActionPanel } from './panels/action-panel.js';
 import { renderDetectRecoverPanel } from './panels/detect-recover-panel.js';
 import { renderHistoryPanel } from './panels/history-panel.js';
+import { clearSimulationFeedback } from './panels/feedback.js';
 import { renderGraph } from './graph/graph-view.js';
 
 let currentSeq = null;
@@ -33,7 +34,6 @@ if (typeof window !== 'undefined') {
     window.detect = detect;
     window.recover = recover;
     window.jumpToEvent = jumpToEvent;
-    window.setPreventionToggles = setPreventionToggles;
     window.refresh = refresh;
     window.jump = jump;
     window.getCurrentSeq = () => currentSeq;
@@ -58,6 +58,7 @@ function updateHistoryButtons(events, seq) {
 }
 
 export async function jump(seq) {
+    clearSimulationFeedback();
     try {
         const data = await jumpToEvent(seq);
         const jumpedState = (data && data.state) ? data.state : data;
@@ -80,9 +81,42 @@ export async function jump(seq) {
     }
 }
 
+function resetConfigureForm() {
+    const configPanel = document.getElementById('configure-panel');
+    if (configPanel) {
+        renderConfigureForm(configPanel, async () => {
+            clearSimulationFeedback();
+            await refresh();
+        }, null);
+    }
+}
+
+function handleNoScenario() {
+    clearSavedScenarioOperations();
+    clearSimulationFeedback();
+    resetConfigureForm();
+    renderProcessPanel(null);
+    renderResourcePanel(null);
+    renderGraph(null);
+    renderActionPanel(null, refresh);
+    renderDetectRecoverPanel(null, refresh);
+    syncPreventionToggles(null);
+    currentSeq = null;
+    currentEvents = [];
+    renderHistoryPanel([], null, jump);
+    updateHistoryButtons([], null);
+}
+
 export async function refresh() {
+    let result;
     try {
-        const result = await getState();
+        result = await getState();
+        const activeState = (result && result.state) ? result.state : result;
+        if (!activeState || !activeState.scenario) {
+            handleNoScenario();
+            return result;
+        }
+
         renderProcessPanel(result);
         renderResourcePanel(result);
         renderGraph(result);
@@ -92,20 +126,12 @@ export async function refresh() {
 
         const hist = await getHistory();
         currentEvents = hist && hist.events ? hist.events : (Array.isArray(hist) ? hist : []);
-        currentSeq = currentEvents.length > 0 ? (result.state ?? result).step : null;
+        currentSeq = currentEvents.length > 0 ? activeState.step : null;
         renderHistoryPanel(currentEvents, currentSeq, jump);
         updateHistoryButtons(currentEvents, currentSeq);
     } catch (err) {
         if (err.code === 'NO_SCENARIO') {
-            renderProcessPanel(null);
-            renderResourcePanel(null);
-            renderGraph(null);
-            renderActionPanel(null, refresh);
-            renderDetectRecoverPanel(null, refresh);
-            currentSeq = null;
-            currentEvents = [];
-            renderHistoryPanel([], null, jump);
-            updateHistoryButtons([], null);
+            handleNoScenario();
         } else {
             renderActionPanel(null, refresh);
             renderDetectRecoverPanel(null, refresh);
@@ -115,6 +141,7 @@ export async function refresh() {
             updateHistoryButtons([], null);
         }
     }
+    return result;
 }
 
 function setupHistoryControls() {
@@ -139,24 +166,20 @@ function setupHistoryControls() {
     }
 }
 
-export function init() {
-    const configPanel = document.getElementById('configure-panel');
-    if (configPanel) {
-        renderConfigureForm(configPanel, async () => {
-            await refresh();
-        });
-
-        const form = configPanel.querySelector('#form-configure');
-        const submitBtn = document.getElementById('btn-submit-configure');
-        if (form && submitBtn) {
-            submitBtn.classList.add('btn-primary');
-        }
-    }
+export async function init() {
     renderDetectRecoverPanel(null, refresh);
     renderHistoryPanel([], null, jump);
     setupHistoryControls();
     updateHistoryButtons([], null);
-    refresh();
+    const state = await refresh();
+
+    const configPanel = document.getElementById('configure-panel');
+    if (configPanel && !configPanel.querySelector('#form-configure')) {
+        renderConfigureForm(configPanel, async () => {
+            clearSimulationFeedback();
+            await refresh();
+        }, state);
+    }
 }
 
 if (typeof document !== 'undefined') {

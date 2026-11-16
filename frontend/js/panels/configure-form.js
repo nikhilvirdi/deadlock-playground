@@ -1,12 +1,13 @@
-import { configureScenario } from '../api/endpoints.js';
+import { configureScenario, savedScenarioOperations } from '../api/endpoints.js';
 import { showError, clearError } from './feedback.js';
 
-export function renderConfigureForm(container, onConfigured) {
+export function renderConfigureForm(container, onConfigured, state) {
     if (!container) {
         return;
     }
 
     container.querySelector('#form-configure')?.remove();
+    const active = state?.state ?? state;
 
     const form = document.createElement('form');
     form.id = 'form-configure';
@@ -55,6 +56,7 @@ export function renderConfigureForm(container, onConfigured) {
     nameInput.type = 'text';
     nameInput.id = 'cfg-name';
     nameInput.placeholder = 'Scenario Name';
+    nameInput.value = active?.scenario?.name ?? '';
     nameLabel.appendChild(nameInput);
     nameGroup.appendChild(nameLabel);
     fields.appendChild(nameGroup);
@@ -122,7 +124,9 @@ export function renderConfigureForm(container, onConfigured) {
         addResourceRow().focus();
     });
     resGroup.appendChild(addResBtn);
-    addResourceRow();
+    for (const { id, total, shareable } of active?.resources ?? [{}]) {
+        addResourceRow(id, total, shareable);
+    }
     fields.appendChild(resGroup);
 
     // Processes
@@ -177,7 +181,9 @@ export function renderConfigureForm(container, onConfigured) {
         addProcessRow().focus();
     });
     procGroup.appendChild(addProcBtn);
-    addProcessRow();
+    for (const { id, priority } of active?.processes ?? [{}]) {
+        addProcessRow(id, priority);
+    }
     fields.appendChild(procGroup);
 
     // Operations
@@ -193,7 +199,16 @@ export function renderConfigureForm(container, onConfigured) {
     opsTextarea.setAttribute('aria-labelledby', opsHeading.id);
     opsTextarea.rows = 4;
     opsTextarea.placeholder = 'P1 REQUEST R1 1\nP1 RELEASE R1 1';
+    opsTextarea.value = savedScenarioOperations(active);
     opsGroup.appendChild(opsTextarea);
+
+    const avoidanceLabel = document.createElement('label');
+    const avoidanceInput = document.createElement('input');
+    avoidanceInput.type = 'checkbox';
+    avoidanceInput.id = 'cfg-bankers-avoidance';
+    avoidanceInput.title = "Use scripted resource claims. Turn off to demonstrate deadlocks.";
+    avoidanceLabel.append(avoidanceInput, document.createTextNode(" Banker's avoidance"));
+    opsGroup.appendChild(avoidanceLabel);
     fields.appendChild(opsGroup);
 
     // Prevention toggles
@@ -206,7 +221,7 @@ export function renderConfigureForm(container, onConfigured) {
     const toggles = [
         { label: 'Mutual exclusion', key: 'mutualExclusion' },
         { label: 'Hold and wait', key: 'holdAndWait' },
-        { label: 'No preemption', key: 'noPreemption' },
+        { label: 'Release when blocked', key: 'noPreemption' },
         { label: 'Circular wait', key: 'circularWait' }
     ];
 
@@ -228,6 +243,7 @@ export function renderConfigureForm(container, onConfigured) {
     submitBtn.type = 'submit';
     submitBtn.id = 'btn-submit-configure';
     submitBtn.textContent = 'Configure';
+    submitBtn.classList.add('btn-primary');
     form.appendChild(submitBtn);
 
     const errorLine = document.createElement('div');
@@ -263,9 +279,9 @@ export function renderConfigureForm(container, onConfigured) {
             }
             resourceIds.add(id);
 
-            const total = totalInput ? parseInt(totalInput.value, 10) : 1;
-            if (isNaN(total) || total < 1) {
-                return { field: totalInput, error: 'Resource ' + id + ': total must be a whole number of at least 1.' };
+            const total = Number(totalInput.value);
+            if (!/^\d+$/.test(totalInput.value) || total < 1 || total > 256) {
+                return { field: totalInput, error: 'Resource ' + id + ': total must be a whole number from 1 to 256.' };
             }
 
             resources.push({
@@ -295,9 +311,10 @@ export function renderConfigureForm(container, onConfigured) {
             }
             processIds.add(id);
 
-            const priority = prioInput && prioInput.value.trim() !== '' ? parseInt(prioInput.value, 10) : 1;
-            if (isNaN(priority)) {
-                return { field: prioInput, error: 'Process ' + id + ': priority must be a valid number.' };
+            const priority = prioInput.value === '' ? 1 : Number(prioInput.value);
+            if (prioInput.validity.badInput || (prioInput.value !== '' && !/^-?\d+$/.test(prioInput.value))
+                    || priority < -2147483648 || priority > 2147483647) {
+                return { field: prioInput, error: 'Process ' + id + ': priority must be a whole number from -2147483648 to 2147483647.' };
             }
 
             processes.push({
@@ -331,8 +348,8 @@ export function renderConfigureForm(container, onConfigured) {
                 return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': resource ' + resId + ' does not exist.' };
             }
             const count = Number(countStr);
-            if (!Number.isInteger(count) || count < 1) {
-                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': count must be a whole number of at least 1.' };
+            if (!/^\d+$/.test(countStr) || count < 1 || count > 2147483647) {
+                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': count must be a whole number from 1 to 2147483647.' };
             }
 
             const proc = processes.find(p => p.id === procId);
@@ -355,6 +372,7 @@ export function renderConfigureForm(container, onConfigured) {
         return {
             body: {
                 name,
+                bankersAvoidance: avoidanceInput.checked,
                 prevention,
                 resources,
                 processes
@@ -388,7 +406,7 @@ export function renderConfigureForm(container, onConfigured) {
         }
 
         try {
-            const data = await configureScenario(parsed.body);
+            const data = await configureScenario(parsed.body, opsTextarea.value);
             const state = (data && data.state) ? data.state : data;
             if (typeof onConfigured === 'function') {
                 onConfigured(state);
@@ -400,19 +418,21 @@ export function renderConfigureForm(container, onConfigured) {
     });
 
     container.appendChild(form);
+    syncPreventionToggles(active);
 }
 
 export function syncPreventionToggles(state) {
     const actualState = (state && state.state) ? state.state : state;
-    const prev = (actualState && actualState.prevention) ? actualState.prevention : null;
-    if (!prev) {
-        return;
+    const avoidanceInput = document.getElementById('cfg-bankers-avoidance');
+    if (avoidanceInput) {
+        avoidanceInput.checked = Boolean(actualState?.scenario?.bankersAvoidance);
     }
+    const prev = (actualState && actualState.prevention) ? actualState.prevention : null;
     const keys = ['mutualExclusion', 'holdAndWait', 'noPreemption', 'circularWait'];
     for (const key of keys) {
         const el = document.getElementById('cfg-prev-' + key);
-        if (el && typeof prev[key] === 'boolean') {
-            el.checked = prev[key];
+        if (el) {
+            el.checked = Boolean(prev && prev[key]);
         }
     }
 }

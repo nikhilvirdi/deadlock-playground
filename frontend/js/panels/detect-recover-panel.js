@@ -1,5 +1,5 @@
 import { detect, recover, reset } from '../api/endpoints.js';
-import { showError, clearError } from './feedback.js';
+import { clearSimulationFeedback, showSimulationError, showSimulationFeedback } from './feedback.js';
 
 let initialized = false;
 let refreshHandler = null;
@@ -33,35 +33,32 @@ function createDetectSection(container) {
 
     detectResultLine = document.createElement('div');
     detectResultLine.id = 'detect-result-line';
-    detectResultLine.className = 'action-result-line';
+    detectResultLine.className = 'simulation-feedback';
+    detectResultLine.setAttribute('role', 'status');
     group.appendChild(detectResultLine);
 
     detectErrorLine = document.createElement('div');
     detectErrorLine.id = 'detect-error-line';
-    detectErrorLine.className = 'error-line';
+    detectErrorLine.className = 'simulation-feedback';
+    detectErrorLine.setAttribute('role', 'status');
     group.appendChild(detectErrorLine);
 
     btnDetect.addEventListener('click', async () => {
-        clearError('detect-error-line');
-        detectResultLine.textContent = '';
+        const revision = clearSimulationFeedback();
         try {
             const data = await detect();
-            if (!data.deadlocked || !data.processes || data.processes.length === 0) {
-                detectResultLine.textContent = 'No deadlock found';
-            } else if (data.cycle && Array.isArray(data.cycle) && data.cycle.length > 0) {
-                const procList = data.processes.join(', ');
-                const cycleList = data.cycle.join(', ');
-                detectResultLine.textContent = `Deadlock: processes ${procList}; cycle ${cycleList}`;
-            } else {
-                const procList = data.processes.join(', ');
-                detectResultLine.textContent = `Deadlock: processes ${procList}`;
-            }
-
             if (typeof refreshHandler === 'function') {
                 await refreshHandler();
             }
+            let message = 'No deadlock detected.';
+            if (data.deadlocked) {
+                const processes = data.processes?.length ? ` in ${data.processes.join(', ')}` : '';
+                message = `Deadlock detected${processes}.`;
+                if (data.cycle?.length) message += ` Cycle: ${data.cycle.join(' → ')}.`;
+            }
+            showSimulationFeedback(detectResultLine, revision, message, data.deadlocked ? 'error' : 'success');
         } catch (err) {
-            showError('detect-error-line', err);
+            showSimulationError(detectErrorLine, revision, err);
         }
     });
 
@@ -132,33 +129,33 @@ function createRecoverSection(container) {
 
     recoverResultLine = document.createElement('div');
     recoverResultLine.id = 'recover-result-line';
-    recoverResultLine.className = 'action-result-line';
+    recoverResultLine.className = 'simulation-feedback';
+    recoverResultLine.setAttribute('role', 'status');
     group.appendChild(recoverResultLine);
 
     recoverErrorLine = document.createElement('div');
     recoverErrorLine.id = 'recover-error-line';
-    recoverErrorLine.className = 'error-line';
+    recoverErrorLine.className = 'simulation-feedback';
+    recoverErrorLine.setAttribute('role', 'status');
     group.appendChild(recoverErrorLine);
 
     btnRecover.addEventListener('click', async () => {
-        clearError('recover-error-line');
-        recoverResultLine.textContent = '';
+        const revision = clearSimulationFeedback();
         const policy = policySelect.value;
         const strategy = strategySelect.value;
 
         try {
             const data = await recover(policy, strategy);
-            const roundsStr = (data.rounds || [])
-                .map(r => `victim ${r.victim} (${r.strategy})`)
-                .join(', ');
-            const resolvedStr = data.resolved ? 'resolved' : 'unresolved';
-            recoverResultLine.textContent = roundsStr ? `Rounds: ${roundsStr}; ${resolvedStr}` : `Deadlock ${resolvedStr}`;
-
             if (typeof refreshHandler === 'function') {
                 await refreshHandler();
             }
+            const rounds = (data.rounds || []).map(round => round.strategy === 'PREEMPT'
+                ? `Preempted resources from ${round.victim}.`
+                : `Terminated ${round.victim}.`);
+            const outcome = data.resolved ? 'Deadlock resolved.' : 'Deadlock remains.';
+            showSimulationFeedback(recoverResultLine, revision, [outcome, ...rounds].join(' '), data.resolved ? 'success' : 'error');
         } catch (err) {
-            showError('recover-error-line', err);
+            showSimulationError(recoverErrorLine, revision, err);
         }
     });
 
@@ -181,15 +178,14 @@ function createResetSection(container) {
 
     resetErrorLine = document.createElement('div');
     resetErrorLine.id = 'reset-error-line';
-    resetErrorLine.className = 'error-line';
+    resetErrorLine.className = 'simulation-feedback';
+    resetErrorLine.setAttribute('role', 'status');
     group.appendChild(resetErrorLine);
 
     btnReset.addEventListener('click', async () => {
-        clearError('reset-error-line');
+        const revision = clearSimulationFeedback();
         try {
             await reset(false);
-            if (detectResultLine) detectResultLine.textContent = '';
-            if (recoverResultLine) recoverResultLine.textContent = '';
             if (typeof refreshHandler === 'function') {
                 await refreshHandler();
             }
@@ -199,17 +195,15 @@ function createResetSection(container) {
                 if (confirmed) {
                     try {
                         await reset(true);
-                        if (detectResultLine) detectResultLine.textContent = '';
-                        if (recoverResultLine) recoverResultLine.textContent = '';
                         if (typeof refreshHandler === 'function') {
                             await refreshHandler();
                         }
                     } catch (innerErr) {
-                        showError('reset-error-line', innerErr);
+                        showSimulationError(resetErrorLine, revision, innerErr);
                     }
                 }
             } else {
-                showError('reset-error-line', err);
+                showSimulationError(resetErrorLine, revision, err);
             }
         }
     });
