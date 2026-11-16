@@ -11,6 +11,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProcessTest {
+    @Test
+    void aggregateHoldingsCannotOverflowAcrossResources() {
+        Process process = new Process("P", 1);
+        process.holdInstances("R1", Integer.MAX_VALUE);
+        assertThrows(IllegalArgumentException.class, () -> process.holdInstances("R1", 1));
+        assertThrows(IllegalArgumentException.class, () -> process.holdInstances("R2", 1));
+        assertEquals(java.util.Map.of("R1", Integer.MAX_VALUE), process.getHeld());
+        assertEquals(Integer.MAX_VALUE, process.totalHeld());
+    }
+
 
     @Test
     void newProcessInitialState() {

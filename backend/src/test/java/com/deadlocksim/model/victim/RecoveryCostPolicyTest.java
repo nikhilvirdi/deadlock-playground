@@ -11,6 +11,14 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class RecoveryCostPolicyTest {
+    @Test
+    void costCannotWrapIntoANegativeValue() {
+        Process process = new Process("P1", 1);
+        process.holdInstances("R1", Integer.MAX_VALUE);
+        process.recordInstruction();
+        assertEquals(2147483648L, RecoveryCostPolicy.costOf(process));
+    }
+
 
     @Test
     void costOfReturnsHeldPlusInstructionsForKnownProcess() {

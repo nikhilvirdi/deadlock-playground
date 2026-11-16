@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -112,7 +113,7 @@ class SimulationEngineTest {
     }
 
     @Test
-    void resetWithConfirmationRestoresInitialStateAndLeavesExactlyOneEventWithScenarioResetDescription() {
+    void resetWithConfirmationClearsScenarioAndHistory() {
         SimulationEngine engine = new SimulationEngine();
 
         Scenario scenario = new Scenario("Test");
@@ -134,20 +135,17 @@ class SimulationEngineTest {
 
         engine.reset(true);
 
-        assertEquals(ProcessState.RUNNING, p1.getState());
-        assertEquals(0, p1.totalHeld());
-        assertTrue(p1.getHeld().isEmpty());
-        assertFalse(p1.isWaiting());
-        assertFalse(p1.isDeadlocked());
-        assertEquals(3, r1.getAvailable());
-        assertEquals(0, p1.getNextOperationIndex());
+        assertNull(engine.getScenario());
+        assertTrue(engine.getHistoryEvents().isEmpty());
+        assertEquals(0, engine.getViewedSeq());
 
-        List<HistoryEvent> events = engine.getHistoryEvents();
-        assertEquals(1, events.size());
-        HistoryEvent event = events.get(0);
-        assertEquals(EventType.STATE_CHANGE, event.getType());
-        assertEquals("Scenario reset", event.getDescription());
-        assertEquals(0, event.getSequence());
+        Scenario second = new Scenario("Second");
+        second.addProcess(new Process("P2", 1));
+        second.addResource(new Resource("R2", 1, false));
+        assertDoesNotThrow(() -> engine.configure(second));
+        assertNotNull(engine.getScenario());
+        assertEquals(1, engine.getHistoryEvents().size());
+        assertEquals("Scenario loaded", engine.getHistoryEvents().get(0).getDescription());
     }
 
     @Test
@@ -209,12 +207,11 @@ class SimulationEngineTest {
 
         engine.request("P1", "R1", 1);
         List<HistoryEvent> events = engine.getHistoryEvents();
-        assertEquals(3, events.size());
+        assertEquals(2, events.size());
         assertEquals(0, events.get(0).getSequence());
         assertEquals("Scenario loaded", events.get(0).getDescription());
         assertEquals(1, events.get(1).getSequence());
-        assertEquals(2, events.get(2).getSequence());
-        assertEquals(2, engine.getViewedSeq());
+        assertEquals(1, engine.getViewedSeq());
         assertTrue(events.stream().noneMatch(e -> e.getDescription().contains("released")));
     }
 
@@ -248,14 +245,13 @@ class SimulationEngineTest {
 
         engine.configure(scenario);
         engine.request("P1", "R1", 1);
-        assertEquals(3, engine.getHistoryEvents().size());
+        assertEquals(2, engine.getHistoryEvents().size());
 
         engine.release("P1", "R1", 1);
-        assertEquals(4, engine.getHistoryEvents().size());
+        assertEquals(3, engine.getHistoryEvents().size());
         assertEquals(0, engine.getHistoryEvents().get(0).getSequence());
         assertEquals(1, engine.getHistoryEvents().get(1).getSequence());
         assertEquals(2, engine.getHistoryEvents().get(2).getSequence());
-        assertEquals(3, engine.getHistoryEvents().get(3).getSequence());
-        assertEquals(3, engine.getViewedSeq());
+        assertEquals(2, engine.getViewedSeq());
     }
 }

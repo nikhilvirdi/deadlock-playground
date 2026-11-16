@@ -2,12 +2,14 @@ package com.deadlocksim.model;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 
 public class Graph {
     private final Scenario scenario;
@@ -115,7 +117,11 @@ public class Graph {
         List<Edge> list = new ArrayList<>();
         for (Process p : scenario.getProcesses()) {
             if (p.isWaiting()) {
-                list.add(new Edge(p.getId(), p.getWaitingResourceId(), EdgeKind.REQUEST, p.getWaitingCount()));
+                p.getPendingRequest().demand().forEach((resourceId, count) -> {
+                    if (!scenario.isShared(scenario.resource(resourceId))) {
+                        list.add(new Edge(p.getId(), resourceId, EdgeKind.REQUEST, count));
+                    }
+                });
             }
         }
         for (Process p : scenario.getProcesses()) {
@@ -124,6 +130,55 @@ public class Graph {
             }
         }
         return Collections.unmodifiableList(list);
+    }
+
+    public Set<Edge> cycleEdges() {
+        List<Edge> edges = edges();
+        Map<String, List<String>> adjacent = adjacency(edges);
+        Set<Edge> cyclic = new LinkedHashSet<>();
+        for (Edge edge : edges) {
+            if (!edge.getFrom().equals(edge.getTo())
+                    && reaches(edge.getTo(), edge.getFrom(), adjacent, new HashSet<>())) {
+                cyclic.add(edge);
+            }
+        }
+        return cyclic;
+    }
+
+    public static List<String> firstCycle(Set<Edge> cyclicEdges) {
+        if (cyclicEdges.isEmpty()) return List.of();
+        Map<String, List<String>> adjacent = adjacency(cyclicEdges);
+        adjacent.values().forEach(Collections::sort);
+        String start = adjacent.keySet().iterator().next();
+        List<String> cycle = new ArrayList<>();
+        Set<String> visited = new HashSet<>();
+        String current = start;
+        do {
+            cycle.add(current);
+            visited.add(current);
+            current = adjacent.get(current).stream()
+                    .filter(next -> reaches(next, start, adjacent, new HashSet<>(visited)))
+                    .findFirst().orElseThrow();
+        } while (!current.equals(start));
+        cycle.add(start);
+        return cycle;
+    }
+
+    private static Map<String, List<String>> adjacency(Iterable<Edge> edges) {
+        Map<String, List<String>> adjacent = new TreeMap<>();
+        for (Edge edge : edges) {
+            adjacent.computeIfAbsent(edge.getFrom(), key -> new ArrayList<>()).add(edge.getTo());
+        }
+        return adjacent;
+    }
+
+    private static boolean reaches(String node, String target, Map<String, List<String>> adjacent, Set<String> visited) {
+        if (node.equals(target)) return true;
+        if (!visited.add(node)) return false;
+        for (String next : adjacent.getOrDefault(node, List.of())) {
+            if (reaches(next, target, adjacent, visited)) return true;
+        }
+        return false;
     }
 
     public List<List<String>> findCycles() {

@@ -52,30 +52,21 @@ class StepTest {
     void blockedRequestLeavesProcessWaitingAndCursorOnThatOperation() {
         SimulationEngine engine = new SimulationEngine();
         Scenario scenario = new Scenario("Blocked Step");
-        Process p1 = new Process("P1", 1);
-        Process p2 = new Process("P2", 2);
-        Resource r1 = new Resource("R1", 1, false);
-        scenario.addProcess(p1);
-        scenario.addResource(r1);
-        scenario.addProcess(p2);
-
-        scenario.addOperation(new Operation("P1", OperationType.REQUEST, "R1", 1));
-        scenario.addOperation(new Operation("P2", OperationType.REQUEST, "R1", 1));
-
+        Process holder = new Process("Holder", 1);
+        Process waiter = new Process("Waiter", 2);
+        scenario.addResource(new Resource("R1", 1, false));
+        scenario.addProcess(holder);
+        scenario.addProcess(waiter);
+        scenario.addOperation(new Operation("Waiter", OperationType.REQUEST, "R1", 1));
         engine.configure(scenario);
 
-        // Step 1: P1 requests R1 (granted). Since P1 has no further operations, P1 completes.
-        StepResult s1 = engine.step();
-        assertFalse(s1.finished());
-        assertEquals(1, p1.getNextOperationIndex());
-        assertEquals(ProcessState.COMPLETED, p1.getState());
+        engine.request("Holder", "R1", 1);
+        StepResult result = engine.step();
 
-        // Step 2: P1 is COMPLETED, so P2 requests R1 (blocked because P1 holds R1)
-        StepResult s2 = engine.step();
-        assertFalse(s2.finished());
-        assertEquals(0, p2.getNextOperationIndex()); // cursor not advanced
-        assertEquals(ProcessState.WAITING, p2.getState());
-        assertTrue(p2.isWaiting());
+        assertFalse(result.finished());
+        assertEquals(0, waiter.getNextOperationIndex());
+        assertEquals(ProcessState.WAITING, waiter.getState());
+        assertTrue(waiter.isWaiting());
     }
 
     @Test

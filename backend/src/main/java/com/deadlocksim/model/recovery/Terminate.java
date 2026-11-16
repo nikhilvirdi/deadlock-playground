@@ -2,11 +2,7 @@ package com.deadlocksim.model.recovery;
 
 import com.deadlocksim.model.Process;
 import com.deadlocksim.model.ProcessState;
-import com.deadlocksim.model.Resource;
 import com.deadlocksim.model.Scenario;
-
-import java.util.HashMap;
-import java.util.Map;
 
 public class Terminate implements RecoveryStrategy {
 
@@ -22,25 +18,7 @@ public class Terminate implements RecoveryStrategy {
             throw new IllegalArgumentException("Victim process is not in the scenario");
         }
 
-        boolean shared = s.getPreventionToggles().isMutualExclusion();
-
-        Map<String, Resource> resourceMap = new HashMap<>();
-        for (Resource r : s.getResources()) {
-            resourceMap.put(r.getId(), r);
-        }
-
-        for (Map.Entry<String, Integer> entry : new HashMap<>(victim.getHeld()).entrySet()) {
-            String resourceId = entry.getKey();
-            int count = entry.getValue();
-            Resource r = resourceMap.get(resourceId);
-            if (r == null) {
-                throw new IllegalStateException("Resource " + resourceId + " held by victim is not in the scenario");
-            }
-            if (!shared) {
-                r.release(count);
-            }
-            victim.releaseInstances(resourceId, count);
-        }
+        s.releaseAll(victim);
 
         victim.setState(ProcessState.TERMINATED);
         victim.setDeadlocked(false);

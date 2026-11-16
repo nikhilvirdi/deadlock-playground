@@ -11,23 +11,23 @@ public class Snapshot {
     private final Map<String, Map<String, Integer>> processHeld;
     private final Map<String, Boolean> processDeadlocked;
     private final Map<String, Integer> available;
-    private final Map<String, String> processWaitingResource;
-    private final Map<String, Integer> processWaitingCount;
+    private final Map<String, Process.PendingRequest> pendingRequests;
+    private final Map<String, Integer> instructionsExecuted;
     private final Map<String, Integer> processNextIndex;
 
     private Snapshot(Map<String, ProcessState> processStates,
                      Map<String, Map<String, Integer>> processHeld,
                      Map<String, Boolean> processDeadlocked,
                      Map<String, Integer> available,
-                     Map<String, String> processWaitingResource,
-                     Map<String, Integer> processWaitingCount,
+                     Map<String, Process.PendingRequest> pendingRequests,
+                     Map<String, Integer> instructionsExecuted,
                      Map<String, Integer> processNextIndex) {
         this.processStates = processStates;
         this.processHeld = processHeld;
         this.processDeadlocked = processDeadlocked;
         this.available = available;
-        this.processWaitingResource = processWaitingResource;
-        this.processWaitingCount = processWaitingCount;
+        this.pendingRequests = pendingRequests;
+        this.instructionsExecuted = instructionsExecuted;
         this.processNextIndex = processNextIndex;
     }
 
@@ -39,8 +39,8 @@ public class Snapshot {
         Map<String, Map<String, Integer>> held = new LinkedHashMap<>();
         Map<String, Boolean> deadlocked = new LinkedHashMap<>();
         Map<String, Integer> avail = new LinkedHashMap<>();
-        Map<String, String> waitingResource = new LinkedHashMap<>();
-        Map<String, Integer> waitingCount = new LinkedHashMap<>();
+        Map<String, Process.PendingRequest> pendingRequests = new LinkedHashMap<>();
+        Map<String, Integer> instructionsExecuted = new LinkedHashMap<>();
         Map<String, Integer> nextIndex = new LinkedHashMap<>();
 
         for (Process p : s.getProcesses()) {
@@ -48,9 +48,9 @@ public class Snapshot {
             held.put(p.getId(), Collections.unmodifiableMap(new LinkedHashMap<>(p.getHeld())));
             deadlocked.put(p.getId(), p.isDeadlocked());
             if (p.isWaiting()) {
-                waitingResource.put(p.getId(), p.getWaitingResourceId());
-                waitingCount.put(p.getId(), p.getWaitingCount());
+                pendingRequests.put(p.getId(), p.getPendingRequest());
             }
+            instructionsExecuted.put(p.getId(), p.getInstructionsExecuted());
             nextIndex.put(p.getId(), p.getNextOperationIndex());
         }
 
@@ -63,8 +63,8 @@ public class Snapshot {
                 Collections.unmodifiableMap(held),
                 Collections.unmodifiableMap(deadlocked),
                 Collections.unmodifiableMap(avail),
-                Collections.unmodifiableMap(waitingResource),
-                Collections.unmodifiableMap(waitingCount),
+                Collections.unmodifiableMap(pendingRequests),
+                Collections.unmodifiableMap(instructionsExecuted),
                 Collections.unmodifiableMap(nextIndex)
         );
     }
@@ -92,17 +92,9 @@ public class Snapshot {
             p.setState(processStates.get(pid));
             p.setDeadlocked(processDeadlocked.get(pid));
             p.restoreHeld(processHeld.get(pid));
-            String waitRes = processWaitingResource.get(pid);
-            Integer waitCnt = processWaitingCount.get(pid);
-            if (waitRes != null && waitCnt != null) {
-                p.setWaitingFor(waitRes, waitCnt);
-            } else {
-                p.clearWaitingFor();
-            }
-            Integer idx = processNextIndex.get(pid);
-            if (idx != null) {
-                p.restoreNextOperationIndex(idx);
-            }
+            p.setPendingRequest(pendingRequests.get(pid));
+            p.restoreNextOperationIndex(processNextIndex.get(pid));
+            p.restoreInstructionsExecuted(instructionsExecuted.get(pid));
         }
 
         for (Resource r : s.getResources()) {
@@ -128,11 +120,15 @@ public class Snapshot {
     }
 
     public Map<String, String> getProcessWaitingResource() {
-        return processWaitingResource;
+        Map<String, String> resources = new LinkedHashMap<>();
+        pendingRequests.forEach((id, request) -> resources.put(id, request.resourceId()));
+        return Collections.unmodifiableMap(resources);
     }
 
     public Map<String, Integer> getProcessWaitingCount() {
-        return processWaitingCount;
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        pendingRequests.forEach((id, request) -> counts.put(id, request.count()));
+        return Collections.unmodifiableMap(counts);
     }
 
     public Map<String, Integer> getProcessNextIndex() {

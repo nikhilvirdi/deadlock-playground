@@ -4,9 +4,6 @@ import com.deadlocksim.model.Process;
 import com.deadlocksim.model.Resource;
 import com.deadlocksim.model.Scenario;
 
-import java.util.HashMap;
-import java.util.Map;
-
 public class Preempt implements RecoveryStrategy {
     private final String resourceId;
 
@@ -38,38 +35,11 @@ public class Preempt implements RecoveryStrategy {
             throw new IllegalStateException("Victim does not hold resource: " + resourceId);
         }
 
-        boolean shared = s.getPreventionToggles().isMutualExclusion();
-
-        Map<String, Resource> resourceMap = new HashMap<>();
-        for (Resource r : s.getResources()) {
-            resourceMap.put(r.getId(), r);
+        Resource targetResource = s.resource(resourceId);
+        if (s.isShared(targetResource)) {
+            throw new IllegalStateException("Cannot preempt shared resource: " + resourceId);
         }
-
-        Resource targetResource = resourceMap.get(resourceId);
-        if (targetResource == null) {
-            throw new IllegalStateException("Resource " + resourceId + " is not in the scenario");
-        }
-
-        if (!shared) {
-            targetResource.release(1);
-            for (Map.Entry<String, Integer> entry : victim.getHeld().entrySet()) {
-                String resId = entry.getKey();
-                int count = entry.getValue();
-                if (resId.equals(resourceId)) {
-                    int remaining = count - 1;
-                    if (remaining > 0) {
-                        targetResource.release(remaining);
-                    }
-                } else {
-                    Resource r = resourceMap.get(resId);
-                    if (r == null) {
-                        throw new IllegalStateException("Resource " + resId + " is not in the scenario");
-                    }
-                    r.release(count);
-                }
-            }
-        }
-
+        s.releaseAll(victim);
         victim.rollbackState();
     }
 }

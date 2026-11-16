@@ -6,11 +6,11 @@ import java.util.List;
 
 public class RecoveryCostPolicy implements VictimPolicy {
 
-    public static int costOf(Process p) {
+    public static long costOf(Process p) {
         if (p == null) {
             throw new IllegalArgumentException("Process must not be null");
         }
-        return p.totalHeld() + p.getInstructionsExecuted();
+        return (long) p.totalHeld() + p.getInstructionsExecuted();
     }
 
     @Override
@@ -20,11 +20,11 @@ public class RecoveryCostPolicy implements VictimPolicy {
         }
 
         Process victim = deadlocked.get(0);
-        int lowestCost = costOf(victim);
+        long lowestCost = costOf(victim);
 
         for (int i = 1; i < deadlocked.size(); i++) {
             Process current = deadlocked.get(i);
-            int currentCost = costOf(current);
+            long currentCost = costOf(current);
 
             if (currentCost < lowestCost) {
                 victim = current;

@@ -6,9 +6,10 @@ import com.deadlocksim.model.Resource;
 import com.deadlocksim.model.Scenario;
 
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.BinaryOperator;
 
 public class CycleDetection implements DetectionStrategy {
 
@@ -25,33 +26,26 @@ public class CycleDetection implements DetectionStrategy {
             }
         }
 
-        List<List<String>> cycles = g.findCycles();
-        if (cycles.isEmpty()) {
+        Set<Graph.Edge> cyclicEdges = g.cycleEdges();
+        if (cyclicEdges.isEmpty()) {
             for (Process process : scenario.getProcesses()) {
                 process.setDeadlocked(false);
             }
             return DetectionResult.none();
         }
 
-        Set<String> scenarioProcessIds = new HashSet<>();
-        for (Process process : scenario.getProcesses()) {
-            scenarioProcessIds.add(process.getId());
-        }
-
-        Set<String> deadlockedProcessIds = new HashSet<>();
-        for (List<String> cycle : cycles) {
-            for (String nodeId : cycle) {
-                if (scenarioProcessIds.contains(nodeId)) {
-                    deadlockedProcessIds.add(nodeId);
-                }
+        Map<String, String> recoveryResources = new HashMap<>();
+        for (Graph.Edge edge : cyclicEdges) {
+            if (edge.getKind() == Graph.EdgeKind.ALLOCATION) {
+                recoveryResources.merge(edge.getTo(), edge.getFrom(), BinaryOperator.minBy(String::compareTo));
             }
         }
 
         for (Process process : scenario.getProcesses()) {
-            process.setDeadlocked(deadlockedProcessIds.contains(process.getId()));
+            process.setDeadlocked(recoveryResources.containsKey(process.getId()));
         }
 
-        List<String> firstCycle = cycles.get(0);
-        return DetectionResult.of(new ArrayList<>(deadlockedProcessIds), firstCycle);
+        return DetectionResult.of(new ArrayList<>(recoveryResources.keySet()), Graph.firstCycle(cyclicEdges), recoveryResources);
     }
+
 }

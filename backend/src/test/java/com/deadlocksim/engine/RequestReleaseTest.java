@@ -1,6 +1,8 @@
 package com.deadlocksim.engine;
 
 import com.deadlocksim.model.EventType;
+import com.deadlocksim.model.Operation;
+import com.deadlocksim.model.OperationType;
 import com.deadlocksim.model.PreventionToggles;
 import com.deadlocksim.model.Process;
 import com.deadlocksim.model.ProcessState;
@@ -63,46 +65,34 @@ class RequestReleaseTest {
     }
 
     @Test
-    void unsafeGrantIsDeniedUnsafeProcessIsWaitingAndAvoidanceCheckEventExists() {
+    void unsafeGrantIsDeniedAgainstFutureClaimsAndRecorded() {
         SimulationEngine engine = new SimulationEngine();
         Scenario scenario = new Scenario("Avoidance Test");
+        scenario.setBankersAvoidance(true);
         Process p1 = new Process("P1", 1);
         Process p2 = new Process("P2", 2);
-        Process p3 = new Process("P3", 3);
-        Resource r1 = new Resource("R1", 2, false);
-        Resource r2 = new Resource("R2", 2, false);
+        Resource r1 = new Resource("R1", 1, false);
+        Resource r2 = new Resource("R2", 1, false);
         scenario.addProcess(p1);
         scenario.addProcess(p2);
-        scenario.addProcess(p3);
         scenario.addResource(r1);
         scenario.addResource(r2);
-
-        // P1 holds R1:1 and waits for R2:2
-        r1.grant(1);
-        p1.holdInstances("R1", 1);
-        p1.setState(ProcessState.WAITING);
-        p1.setWaitingFor("R2", 2);
-
-        // P2 holds R2:1 and waits for R1:2
-        r2.grant(1);
-        p2.holdInstances("R2", 1);
-        p2.setState(ProcessState.WAITING);
-        p2.setWaitingFor("R1", 2);
-
+        scenario.addOperation(new Operation("P1", OperationType.REQUEST, "R1", 1));
+        scenario.addOperation(new Operation("P1", OperationType.REQUEST, "R2", 1));
+        scenario.addOperation(new Operation("P2", OperationType.REQUEST, "R2", 1));
+        scenario.addOperation(new Operation("P2", OperationType.REQUEST, "R1", 1));
         engine.configure(scenario);
 
-        // P3 requests R1:1 which leaves stuck processes
-        RequestResult result = engine.request("P3", "R1", 1);
+        assertEquals(List.of("P1", "P2"), engine.request("P1", "R1", 1).safety().getSequence());
+        assertFalse(p1.isWaiting());
+        RequestResult result = engine.request("P2", "R2", 1);
 
         assertEquals(RequestOutcome.DENIED_UNSAFE, result.outcome());
-        assertEquals(ProcessState.WAITING, p3.getState());
-        assertEquals("R1", p3.getWaitingResourceId());
-        assertEquals(1, p3.getWaitingCount());
-
-        List<HistoryEvent> events = engine.getHistoryEvents();
-        boolean hasAvoidanceCheck = events.stream()
-                .anyMatch(e -> e.getType() == EventType.AVOIDANCE_CHECK);
-        assertTrue(hasAvoidanceCheck);
+        assertEquals(ProcessState.WAITING, p2.getState());
+        assertEquals("R2", p2.getWaitingResourceId());
+        assertEquals(1, r2.getAvailable());
+        assertTrue(p2.getHeld().isEmpty());
+        assertEquals(EventType.AVOIDANCE_CHECK, engine.getHistoryEvents().get(engine.getViewedSeq()).getType());
     }
 
     @Test
@@ -165,28 +155,35 @@ class RequestReleaseTest {
     }
 
     @Test
-    void mutualExclusionOnRequestForExhaustedResourceIsStillGrantedAndAvailableUnchanged() {
+    void mutualExclusionOnSharesOnlyTheMarkedResource() {
         SimulationEngine engine = new SimulationEngine();
         Scenario scenario = new Scenario("Mutual Exclusion Test");
         Process p1 = new Process("P1", 1);
-        Resource r1 = new Resource("R1", 1, false);
+        Process p2 = new Process("P2", 2);
+        Resource shared = new Resource("S", 1, true);
+        Resource exclusive = new Resource("E", 1, false);
         scenario.addProcess(p1);
-        scenario.addResource(r1);
-
+        scenario.addProcess(p2);
+        scenario.addResource(shared);
+        scenario.addResource(exclusive);
         PreventionToggles toggles = scenario.getPreventionToggles();
         toggles.setMutualExclusion(true);
         scenario.setPreventionToggles(toggles);
-
         engine.configure(scenario);
 
-        // Exhaust resource
-        r1.grant(1);
-        assertEquals(0, r1.getAvailable());
+        assertEquals(RequestOutcome.GRANTED, engine.request("P1", "S", 1).outcome());
+        assertEquals(RequestOutcome.GRANTED, engine.request("P2", "S", 1).outcome());
+        assertEquals(1, shared.getAvailable());
+        assertEquals(RequestOutcome.GRANTED, engine.request("P1", "E", 1).outcome());
+        assertEquals(RequestOutcome.BLOCKED, engine.request("P2", "E", 1).outcome());
+        assertEquals(0, exclusive.getAvailable());
 
-        RequestResult result = engine.request("P1", "R1", 2);
-        assertEquals(RequestOutcome.GRANTED, result.outcome());
-        assertEquals(2, p1.totalHeld());
-        assertEquals(0, r1.getAvailable());
+        assertEquals(List.of("P2"), engine.release("P1", "E", 1).unblockedProcessIds());
+        assertEquals(0, exclusive.getAvailable());
+        assertEquals(1, p2.getHeld().get("E"));
+        engine.release("P2", "S", 1);
+        assertEquals(1, shared.getAvailable());
+        assertEquals(1, p1.getHeld().get("S"));
     }
 
     @Test
@@ -238,7 +235,7 @@ class RequestReleaseTest {
         assertNull(p2.getWaitingResourceId());
         assertEquals(0, p2.getWaitingCount());
         assertEquals(1, p2.totalHeld());
-        assertEquals(1, p2.getNextOperationIndex()); // blocked REQUEST advanced
+        assertEquals(0, p2.getNextOperationIndex()); // manual wait consumes no script
         assertEquals(0, r1.getAvailable()); // granted to P2
     }
 
@@ -257,14 +254,13 @@ class RequestReleaseTest {
 
         engine.request("P1", "R1", 1);
         List<HistoryEvent> eventsAfterReq = engine.getHistoryEvents();
-        assertEquals(3, eventsAfterReq.size()); // STATE_CHANGE, AVOIDANCE_CHECK, GRANT
-        assertEquals(EventType.AVOIDANCE_CHECK, eventsAfterReq.get(1).getType());
-        assertEquals(EventType.GRANT, eventsAfterReq.get(2).getType());
+        assertEquals(2, eventsAfterReq.size());
+        assertEquals(EventType.GRANT, eventsAfterReq.get(1).getType());
 
         engine.release("P1", "R1", 1);
         List<HistoryEvent> eventsAfterRel = engine.getHistoryEvents();
-        assertEquals(4, eventsAfterRel.size()); // + RELEASE
-        assertEquals(EventType.RELEASE, eventsAfterRel.get(3).getType());
+        assertEquals(3, eventsAfterRel.size());
+        assertEquals(EventType.RELEASE, eventsAfterRel.get(2).getType());
     }
 }
 

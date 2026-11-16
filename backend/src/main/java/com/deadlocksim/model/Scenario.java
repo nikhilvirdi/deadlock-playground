@@ -12,6 +12,7 @@ public class Scenario {
     private final List<Process> processes;
     private final Map<String, List<Operation>> operations;
     private PreventionToggles preventionToggles;
+    private boolean bankersAvoidance;
 
     public Scenario(String name) {
         if (name == null || name.isBlank()) {
@@ -37,6 +38,66 @@ public class Scenario {
             throw new IllegalArgumentException("PreventionToggles must not be null");
         }
         this.preventionToggles = t.copy();
+    }
+
+    public boolean isBankersAvoidance() {
+        return bankersAvoidance;
+    }
+
+    public void setBankersAvoidance(boolean enabled) {
+        this.bankersAvoidance = enabled;
+    }
+
+    public boolean isShared(Resource resource) {
+        return preventionToggles.isMutualExclusion() && resource.isShareable();
+    }
+
+    public Resource resource(String id) {
+        return resources.stream().filter(r -> r.getId().equals(id)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Unknown resource: " + id));
+    }
+
+    public void grant(Process process, Resource resource, int count) {
+        process.checkHoldingCapacity(count);
+        if (isShared(resource)) {
+            if (count > resource.getTotal() - process.getHeld().getOrDefault(resource.getId(), 0)) {
+                throw new IllegalArgumentException("Shared holding exceeds capacity of " + resource.getId());
+            }
+        } else if (!resource.grant(count)) {
+            throw new IllegalStateException("Insufficient available instances of " + resource.getId());
+        }
+        process.holdInstances(resource.getId(), count);
+    }
+
+    public void release(Process process, Resource resource, int count) {
+        if (count <= 0 || count > process.getHeld().getOrDefault(resource.getId(), 0)) {
+            throw new IllegalArgumentException("Invalid release from " + resource.getId());
+        }
+        if (!isShared(resource)) {
+            resource.release(count);
+        }
+        process.releaseInstances(resource.getId(), count);
+    }
+
+    public void releaseAll(Process process) {
+        process.getHeld().forEach((id, count) -> release(process, resource(id), count));
+    }
+
+    public Map<String, Integer> maximumClaims(String processId) {
+        Map<String, Integer> balance = new LinkedHashMap<>();
+        Map<String, Integer> maximum = new LinkedHashMap<>();
+        for (Operation operation : getOperations(processId)) {
+            String resourceId = operation.getResourceId();
+            long delta = operation.getType() == OperationType.REQUEST ? operation.getCount() : -operation.getCount();
+            long held = balance.getOrDefault(resourceId, 0) + delta;
+            if (held < 0 || held > resource(resourceId).getTotal()) {
+                throw new IllegalArgumentException("Banker's avoidance requires a valid resource claim for "
+                        + processId + " on " + resourceId);
+            }
+            balance.put(resourceId, (int) held);
+            maximum.merge(resourceId, (int) held, Math::max);
+        }
+        return maximum;
     }
 
     public void addResource(Resource r) {
@@ -105,6 +166,13 @@ public class Scenario {
         }
         if (resources.isEmpty()) {
             errors.add("Scenario must contain at least one resource");
+        }
+        if (bankersAvoidance) {
+            try {
+                processes.forEach(process -> maximumClaims(process.getId()));
+            } catch (IllegalArgumentException error) {
+                errors.add(error.getMessage());
+            }
         }
         return errors;
     }

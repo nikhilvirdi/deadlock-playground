@@ -5,6 +5,7 @@ import com.deadlocksim.model.Graph;
 import com.deadlocksim.model.Operation;
 import com.deadlocksim.model.OperationType;
 import com.deadlocksim.model.Process;
+import com.deadlocksim.model.Process.PendingRequest;
 import com.deadlocksim.model.ProcessState;
 import com.deadlocksim.model.Resource;
 import com.deadlocksim.model.SafetyChecker;
@@ -21,7 +22,11 @@ import com.deadlocksim.model.recovery.Terminate;
 import com.deadlocksim.model.victim.VictimPolicy;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+
+import static com.deadlocksim.engine.SimulationException.Kind.*;
 
 public class SimulationEngine {
     private Scenario scenario;
@@ -73,140 +78,191 @@ public class SimulationEngine {
 
     public void reset(boolean confirmed) {
         if (this.scenario == null) {
-            throw new IllegalStateException("No scenario loaded");
+            throw new SimulationException(NO_SCENARIO, "No scenario loaded");
         }
         if (this.history.size() > 1 && !confirmed) {
-            throw new IllegalStateException("Confirmation required to reset");
+            throw new SimulationException(VALIDATION_ERROR, "Confirmation required to reset");
         }
 
-        this.initialSnapshot.restoreInto(this.scenario);
+        this.scenario = null;
+        this.initialSnapshot = null;
         this.history.clear();
-        this.history.add(EventType.STATE_CHANGE, "Scenario reset", this.initialSnapshot);
-        updateViewedSeq();
+        this.viewedSeq = 0;
     }
 
     public RequestResult request(String processId, String resourceId, int count) {
-        if (scenario == null) {
-            throw new IllegalStateException("No scenario loaded");
-        }
-        if (count <= 0) {
-            throw new IllegalArgumentException("Count must be greater than zero");
-        }
-        Process process = scenario.getProcesses().stream()
-                .filter(p -> p.getId().equals(processId))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown process: " + processId));
-        Resource resource = scenario.getResources().stream()
-                .filter(r -> r.getId().equals(resourceId))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown resource: " + resourceId));
+        Process process = requireProcess(processId);
+        return request(process, new PendingRequest(resourceId, count, Map.of(resourceId, count), -1, 0));
+    }
 
+    private RequestResult request(Process process, PendingRequest request) {
         if (process.getState() != ProcessState.RUNNING) {
-            throw new IllegalStateException("Process is not RUNNING: " + processId);
+            throw new SimulationException(VALIDATION_ERROR, "Process is not RUNNING: " + process.getId());
+        }
+        process.checkHoldingCapacity(request.count());
+        if (request.count() > scenario.resource(request.resourceId()).getTotal()
+                && request.operationCount() <= 1) {
+            throw new IllegalArgumentException("Request count cannot exceed total instances of resource: " + request.resourceId());
         }
 
-        checkTruncateBeforeAction();
+        var toggles = scenario.getPreventionToggles();
+        Map<String, Integer> held = process.getHeld();
+        if (toggles.isHoldAndWait() && !held.isEmpty()) {
+            return rejectPrevention(process, request.operationIndex(), "Hold and wait prevention: release all holdings before starting another request group");
+        }
+        if (toggles.isCircularWait() && violatesOrder(process, held, request)) {
+            return rejectPrevention(process, request.operationIndex(), "Circular wait prevention: request resources in scenario order");
+        }
 
-        if (scenario.getPreventionToggles().isCircularWait()) {
-            List<Resource> resources = scenario.getResources();
-            int reqIndex = -1;
-            for (int i = 0; i < resources.size(); i++) {
-                if (resources.get(i).getId().equals(resourceId)) {
-                    reqIndex = i;
-                    break;
-                }
+        Map<String, Integer> claims = scenario.isBankersAvoidance() ? scenario.maximumClaims(process.getId()) : Map.of();
+        long demandCount = 0;
+        for (var demand : request.demand().entrySet()) {
+            Resource resource = scenario.resource(demand.getKey());
+            int count = demand.getValue();
+            demandCount += count;
+            long after = (long) held.getOrDefault(resource.getId(), 0) + count;
+            if (scenario.isBankersAvoidance() && after > claims.getOrDefault(resource.getId(), 0)) {
+                throw new SimulationException(VALIDATION_ERROR, "Request exceeds the declared claim of " + process.getId()
+                        + " for " + resource.getId() + ". Declare the demand in the script or use demo mode.");
             }
-            int highestHeldIndex = -1;
-            for (String heldResId : process.getHeld().keySet()) {
-                for (int i = 0; i < resources.size(); i++) {
-                    if (resources.get(i).getId().equals(heldResId)) {
-                        if (i > highestHeldIndex) {
-                            highestHeldIndex = i;
-                        }
-                        break;
+            if (scenario.isShared(resource) && after > resource.getTotal() && request.operationCount() == 0) {
+                throw new IllegalArgumentException("Shared holding exceeds capacity of " + resource.getId());
+            }
+            if (count > resource.getTotal() || (scenario.isShared(resource) && after > resource.getTotal())) {
+                return rejectPrevention(process, request.operationIndex(), "Request group exceeds capacity of " + resource.getId());
+            }
+        }
+        if (demandCount > Integer.MAX_VALUE - process.totalHeld()) {
+            throw new IllegalArgumentException("Total instances held by a process cannot exceed " + Integer.MAX_VALUE);
+        }
+
+        String unavailable = unavailableResource(request);
+        if (unavailable != null) {
+            boolean returnHoldings = toggles.isNoPreemption() && !held.isEmpty();
+            if (returnHoldings) {
+                Map<String, Integer> combined = new LinkedHashMap<>(held);
+                for (var demand : request.demand().entrySet()) {
+                    long total = combined.getOrDefault(demand.getKey(), 0) + (long) demand.getValue();
+                    if (total > scenario.resource(demand.getKey()).getTotal()) {
+                        return rejectPrevention(process, request.operationIndex(),
+                                "Release when blocked: cannot reacquire more than the capacity of " + demand.getKey());
                     }
+                    combined.put(demand.getKey(), (int) total);
                 }
+                request = new PendingRequest(unavailable, combined.get(unavailable), combined,
+                        request.operationIndex(), request.operationCount());
+            } else {
+                request = new PendingRequest(unavailable, request.demand().get(unavailable), request.demand(),
+                        request.operationIndex(), request.operationCount());
             }
-            if (highestHeldIndex >= 0 && reqIndex <= highestHeldIndex) {
-                String reason = "Circular wait prevention: resource " + resourceId + " (index " + reqIndex
-                        + ") is not greater than highest held index " + highestHeldIndex;
-                history.add(EventType.BLOCK, reason, Snapshot.capture(scenario));
-                updateViewedSeq();
-                return new RequestResult(RequestOutcome.REJECTED_PREVENTION, reason);
+
+            checkTruncateBeforeAction();
+            if (returnHoldings) scenario.releaseAll(process);
+            queue(process, request);
+            String description = "Process " + process.getId() + " blocked waiting for " + describeDemand(request);
+            if (returnHoldings) description += " after returning its holdings";
+            record(EventType.BLOCK, description);
+            if (returnHoldings) wakeWaitingProcesses();
+            updateViewedSeq();
+            if (!process.isWaiting()) {
+                return new RequestResult(RequestOutcome.GRANTED, "Granted " + describeDemand(request) + " to " + process.getId());
             }
+            return new RequestResult(RequestOutcome.BLOCKED, description);
         }
 
-        if (scenario.getPreventionToggles().isHoldAndWait() && process.totalHeld() > 0) {
-            String reason = "Hold and wait prevention: process " + processId + " already holds resources";
-            history.add(EventType.BLOCK, reason, Snapshot.capture(scenario));
+        SafetyResult safety = scenario.isBankersAvoidance() ? SafetyChecker.check(scenario, process, request.demand()) : null;
+        checkTruncateBeforeAction();
+        if (safety != null && !safety.isSafe()) {
+            queue(process, request);
+            record(EventType.AVOIDANCE_CHECK, safety.getReason());
             updateViewedSeq();
-            return new RequestResult(RequestOutcome.REJECTED_PREVENTION, reason);
+            return new RequestResult(RequestOutcome.DENIED_UNSAFE, safety.getReason(), safety);
         }
 
-        if (isShared()) {
-            process.holdInstances(resourceId, count);
-            String desc = "Granted " + count + " of shared resource " + resourceId + " to " + processId;
-            history.add(EventType.GRANT, desc, Snapshot.capture(scenario));
-            updateViewedSeq();
-            return new RequestResult(RequestOutcome.GRANTED, desc);
-        }
-
-        if (resource.getAvailable() < count) {
-            process.setState(ProcessState.WAITING);
-            process.setWaitingFor(resourceId, count);
-            String desc = "Process " + processId + " blocked waiting for " + count + " of " + resourceId;
-            history.add(EventType.BLOCK, desc, Snapshot.capture(scenario));
-            updateViewedSeq();
-            return new RequestResult(RequestOutcome.BLOCKED, desc);
-        }
-
-        SafetyResult sr = SafetyChecker.check(scenario, processId, resourceId, count);
-        if (!sr.isSafe()) {
-            process.setState(ProcessState.WAITING);
-            process.setWaitingFor(resourceId, count);
-            history.add(EventType.AVOIDANCE_CHECK, sr.getReason(), Snapshot.capture(scenario));
-            updateViewedSeq();
-            return new RequestResult(RequestOutcome.DENIED_UNSAFE, sr.getReason());
-        }
-
-        resource.grant(count);
-        process.holdInstances(resourceId, count);
-        history.add(EventType.AVOIDANCE_CHECK, sr.getReason(), Snapshot.capture(scenario));
-        String grantDesc = "Granted " + count + " of " + resourceId + " to " + processId;
-        history.add(EventType.GRANT, grantDesc, Snapshot.capture(scenario));
+        String description = "Granted " + describeDemand(request) + " to " + process.getId();
+        grant(process, request, description, safety);
+        if (process.isTerminal()) wakeWaitingProcesses();
         updateViewedSeq();
-        return new RequestResult(RequestOutcome.GRANTED, grantDesc);
+        return new RequestResult(RequestOutcome.GRANTED, description, safety);
+    }
+
+    private boolean violatesOrder(Process process, Map<String, Integer> held, PendingRequest request) {
+        List<Resource> resources = scenario.getResources();
+        int highest = held.keySet().stream().mapToInt(id -> resources.indexOf(scenario.resource(id))).max().orElse(-1);
+        if (request.operationCount() > 1) {
+            // Check the original order, including repeated requests within a group.
+            List<Operation> ops = scenario.getOperations(process.getId());
+            for (int i = request.operationIndex(); i < request.operationIndex() + request.operationCount(); i++) {
+                int rank = resources.indexOf(scenario.resource(ops.get(i).getResourceId()));
+                if (rank <= highest) return true;
+                highest = rank;
+            }
+            return false;
+        }
+        return resources.indexOf(scenario.resource(request.resourceId())) <= highest;
+    }
+
+    private RequestResult rejectPrevention(Process process, int operationIndex, String reason) {
+        checkTruncateBeforeAction();
+        if (operationIndex >= 0) {
+            new Terminate().apply(scenario, process);
+            reason += ". Stopped " + process.getId() + "'s script and released its holdings";
+        }
+        record(EventType.BLOCK, reason);
+        if (process.isTerminal()) wakeWaitingProcesses();
+        updateViewedSeq();
+        return new RequestResult(RequestOutcome.REJECTED_PREVENTION, reason);
+    }
+
+    private static String describeDemand(PendingRequest request) {
+        return String.join(", ", request.demand().entrySet().stream()
+                .map(entry -> entry.getValue() + " of " + entry.getKey()).toList());
+    }
+
+    private String unavailableResource(PendingRequest request) {
+        for (var demand : request.demand().entrySet()) {
+            Resource resource = scenario.resource(demand.getKey());
+            if (!scenario.isShared(resource) && demand.getValue() > resource.getAvailable()) return resource.getId();
+        }
+        return null;
+    }
+
+    private static void queue(Process process, PendingRequest request) {
+        process.setState(ProcessState.WAITING);
+        process.setPendingRequest(request);
+    }
+
+    private void grant(Process process, PendingRequest request, String description, SafetyResult safety) {
+        if (request.operationCount() > 0 && process.getNextOperationIndex() != request.operationIndex()) {
+            throw new IllegalStateException("Pending operation no longer matches the script cursor");
+        }
+        request.demand().forEach((id, count) -> scenario.grant(process, scenario.resource(id), count));
+        process.clearWaitingFor();
+        process.setState(ProcessState.RUNNING);
+        process.setDeadlocked(false);
+        boolean completed = finishOperations(process, request.operationCount());
+        if (safety != null) record(EventType.AVOIDANCE_CHECK, safety.getReason());
+        record(EventType.GRANT, description);
+        if (completed) record(EventType.STATE_CHANGE, process.getId() + " completed and released all holdings");
     }
 
     public ReleaseResult release(String processId, String resourceId, int count) {
-        if (scenario == null) {
-            throw new IllegalStateException("No scenario loaded");
-        }
-        if (count <= 0) {
-            throw new IllegalArgumentException("Count must be greater than zero");
-        }
-        Process process = scenario.getProcesses().stream()
-                .filter(p -> p.getId().equals(processId))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown process: " + processId));
-        Resource resource = scenario.getResources().stream()
-                .filter(r -> r.getId().equals(resourceId))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown resource: " + resourceId));
+        return release(requireProcess(processId), resourceId, count, false);
+    }
 
+    private ReleaseResult release(Process process, String resourceId, int count, boolean scripted) {
+        if (count <= 0) throw new IllegalArgumentException("Count must be greater than zero");
+        Resource resource = scenario.resource(resourceId);
         int held = process.getHeld().getOrDefault(resourceId, 0);
         if (held < count) {
-            throw new IllegalStateException("Process " + processId + " holds only " + held + " of " + resourceId);
+            throw new SimulationException(NOT_HELD, "Process " + process.getId() + " holds only " + held + " of " + resourceId);
         }
 
         checkTruncateBeforeAction();
-
-        if (!isShared()) {
-            resource.release(count);
-        }
-        process.releaseInstances(resourceId, count);
-        history.add(EventType.RELEASE, "Process " + processId + " released " + count + " of " + resourceId, Snapshot.capture(scenario));
-
+        scenario.release(process, resource, count);
+        boolean completed = finishOperations(process, scripted ? 1 : 0);
+        record(EventType.RELEASE, "Process " + process.getId() + " released " + count + " of " + resourceId);
+        if (completed) record(EventType.STATE_CHANGE, process.getId() + " completed and released all holdings");
         List<String> unblocked = wakeWaitingProcesses();
         updateViewedSeq();
         return new ReleaseResult(unblocked);
@@ -214,220 +270,155 @@ public class SimulationEngine {
 
     List<String> wakeWaitingProcesses() {
         List<String> unblocked = new ArrayList<>();
-        for (Process wp : scenario.getProcesses()) {
-            if (wp.getState() == ProcessState.WAITING && wp.isWaiting()) {
-                String wResId = wp.getWaitingResourceId();
-                int wCount = wp.getWaitingCount();
-                Resource wr = scenario.getResources().stream()
-                        .filter(r -> r.getId().equals(wResId))
-                        .findFirst()
-                        .orElse(null);
-                if (wr == null) {
-                    continue;
-                }
+        boolean completed;
+        do {
+            completed = false;
+            for (Process process : scenario.getProcesses()) {
+                if (process.getState() != ProcessState.WAITING || !process.isWaiting()) continue;
+                PendingRequest pending = process.getPendingRequest();
+                if (unavailableResource(pending) != null) continue;
+                if (scenario.isBankersAvoidance() && !SafetyChecker.check(scenario, process, pending.demand()).isSafe()) continue;
 
-                boolean canSatisfy;
-                if (isShared()) {
-                    canSatisfy = true;
-                } else if (wr.getAvailable() >= wCount) {
-                    SafetyResult sr = SafetyChecker.check(scenario, wp.getId(), wResId, wCount);
-                    canSatisfy = sr.isSafe();
-                } else {
-                    canSatisfy = false;
-                }
-
-                if (canSatisfy) {
-                    if (!isShared()) {
-                        wr.grant(wCount);
-                    }
-                    wp.holdInstances(wResId, wCount);
-                    wp.clearWaitingFor();
-                    wp.setState(ProcessState.RUNNING);
-                    wp.advanceOperation();
-                    history.add(EventType.GRANT, "Granted " + wCount + " of " + wResId + " to waiting process " + wp.getId(), Snapshot.capture(scenario));
-                    unblocked.add(wp.getId());
-                }
+                grant(process, pending, "Granted " + describeDemand(pending) + " to waiting process " + process.getId(), null);
+                unblocked.add(process.getId());
+                completed |= process.isTerminal();
             }
-        }
+        } while (completed);
         return unblocked;
     }
 
+    private boolean finishOperations(Process process, int count) {
+        if (count == 0) return false;
+        for (int i = 0; i < count; i++) {
+            process.advanceOperation();
+            process.recordInstruction();
+        }
+        if (hasPendingOperations(process)) return false;
+        scenario.releaseAll(process);
+        process.setState(ProcessState.COMPLETED);
+        return true;
+    }
+
+    private boolean hasPendingOperations(Process process) {
+        return !process.isTerminal() && process.getNextOperationIndex() < scenario.getOperations(process.getId()).size();
+    }
+
     public StepResult step() {
-        if (scenario == null) {
-            throw new IllegalStateException("No scenario loaded");
+        requireScenario();
+        for (Process process : scenario.getProcesses()) {
+            if (process.getState() != ProcessState.RUNNING || !hasPendingOperations(process)) continue;
+            String description = executeOperation(process);
+            return new StepResult(description, scenario.getProcesses().stream().noneMatch(this::hasPendingOperations));
+        }
+        return scenario.getProcesses().stream().noneMatch(this::hasPendingOperations)
+                ? new StepResult("Scenario finished", true)
+                : new StepResult("No runnable process; deadlock or waiting", false);
+    }
+
+    private String executeOperation(Process process) {
+        List<Operation> operations = scenario.getOperations(process.getId());
+        int index = process.getNextOperationIndex();
+        Operation op = operations.get(index);
+        if (op.getType() == OperationType.RELEASE) {
+            release(process, op.getResourceId(), op.getCount(), true);
+            return process.getId() + " released " + op.getCount() + " of " + op.getResourceId();
         }
 
-        Process targetProcess = null;
-        List<Operation> targetOps = null;
-        for (Process p : scenario.getProcesses()) {
-            List<Operation> ops = scenario.getOperations(p.getId());
-            if (p.getState() == ProcessState.RUNNING && p.getNextOperationIndex() < ops.size()) {
-                targetProcess = p;
-                targetOps = ops;
-                break;
+        Map<String, Integer> demand = new LinkedHashMap<>();
+        demand.put(op.getResourceId(), op.getCount());
+        int end = index + 1;
+        if (scenario.getPreventionToggles().isHoldAndWait()) {
+            while (end < operations.size() && operations.get(end).getType() == OperationType.REQUEST) {
+                Operation next = operations.get(end++);
+                String id = next.getResourceId();
+                int previous = demand.getOrDefault(id, 0);
+                if (next.getCount() > scenario.resource(id).getTotal() - previous) {
+                    return rejectPrevention(process, index, "Request group exceeds capacity of " + id).reason()
+                            + ": REJECTED_PREVENTION";
+                }
+                demand.put(id, previous + next.getCount());
             }
         }
+        PendingRequest pending = new PendingRequest(op.getResourceId(), op.getCount(), demand, index, end - index);
+        RequestResult result = request(process, pending);
+        return switch (result.outcome()) {
+            case GRANTED -> result.reason();
+            case REJECTED_PREVENTION -> result.reason() + ": REJECTED_PREVENTION";
+            default -> process.getId() + " request (" + describeDemand(pending)
+                    + "): " + result.outcome();
+        };
+    }
 
-        if (targetProcess == null) {
-            boolean allFinished = scenario.getProcesses().stream()
-                    .allMatch(p -> p.getNextOperationIndex() >= scenario.getOperations(p.getId()).size());
-            if (allFinished) {
-                return new StepResult("Scenario finished", true);
-            } else {
-                return new StepResult("No runnable process; deadlock or waiting", false);
-            }
-        }
+    private void requireScenario() {
+        if (scenario == null) throw new SimulationException(NO_SCENARIO, "No scenario loaded");
+    }
 
-        checkTruncateBeforeAction();
+    private Process requireProcess(String processId) {
+        requireScenario();
+        return scenario.getProcesses().stream().filter(p -> p.getId().equals(processId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Unknown process: " + processId));
+    }
 
-        Operation op = targetOps.get(targetProcess.getNextOperationIndex());
-        String description;
-
-        if (op.getType() == OperationType.REQUEST) {
-            RequestResult rr = request(targetProcess.getId(), op.getResourceId(), op.getCount());
-            if (rr.outcome() == RequestOutcome.GRANTED) {
-                targetProcess.advanceOperation();
-                description = targetProcess.getId() + " requested and was granted " + op.getCount() + " of " + op.getResourceId();
-            } else {
-                description = targetProcess.getId() + " request " + op.getResourceId() + " (" + op.getCount() + "): " + rr.outcome();
-            }
-        } else {
-            release(targetProcess.getId(), op.getResourceId(), op.getCount());
-            targetProcess.advanceOperation();
-            description = targetProcess.getId() + " released " + op.getCount() + " of " + op.getResourceId();
-        }
-
-        for (Process p : scenario.getProcesses()) {
-            if (p.getState() == ProcessState.RUNNING
-                    && p.getNextOperationIndex() >= scenario.getOperations(p.getId()).size()
-                    && !p.isWaiting()) {
-                p.setState(ProcessState.COMPLETED);
-                history.add(EventType.STATE_CHANGE, p.getId() + " completed", Snapshot.capture(scenario));
-            }
-        }
-
-        boolean finished = scenario.getProcesses().stream()
-                .allMatch(p -> p.getNextOperationIndex() >= scenario.getOperations(p.getId()).size());
-
-        updateViewedSeq();
-        return new StepResult(description, finished);
+    private void record(EventType type, String description) {
+        history.add(type, description, Snapshot.capture(scenario));
     }
 
     public DetectReport detect() {
-        if (scenario == null) {
-            throw new IllegalStateException("No scenario loaded");
+        requireScenario();
+        if (scenario.getProcesses().stream().noneMatch(Process::isWaiting)) {
+            throw new SimulationException(NO_DEADLOCK, "No waiting process to check");
         }
-        boolean hasWaiting = scenario.getProcesses().stream().anyMatch(Process::isWaiting);
-        if (!hasWaiting) {
-            throw new IllegalStateException("No waiting process to check");
-        }
-
         checkTruncateBeforeAction();
-
-        boolean allSingle = scenario.getResources().stream().allMatch(r -> r.getTotal() == 1);
-        String strategyName = allSingle ? "CYCLE" : "BANKERS";
-        Graph g = new Graph(scenario);
-        DetectionResult result = allSingle
-                ? new CycleDetection().detect(g)
-                : new BankersDetection().detect(g);
-
-        String desc = result.isDeadlocked()
-                ? "Deadlock detected: " + result.getProcessIds()
-                : "No deadlock detected";
-        history.add(EventType.DETECT, desc, Snapshot.capture(scenario));
+        DetectReport report = detectCurrentState();
         updateViewedSeq();
+        return report;
+    }
 
-        return new DetectReport(strategyName, result);
+    private DetectReport detectCurrentState() {
+        boolean allSingle = scenario.getResources().stream().allMatch(r -> r.getTotal() == 1);
+        Graph graph = new Graph(scenario);
+        DetectionResult result = allSingle ? new CycleDetection().detect(graph) : new BankersDetection().detect(graph);
+        record(EventType.DETECT, result.isDeadlocked() ? "Deadlock detected: " + result.getProcessIds() : "No deadlock detected");
+        return new DetectReport(allSingle ? "CYCLE" : "BANKERS", result);
     }
 
     public RecoveryReport recover(VictimPolicy policy, boolean usePreempt) {
-        if (scenario == null) {
-            throw new IllegalStateException("No scenario loaded");
-        }
-        if (policy == null) {
-            throw new IllegalArgumentException("Victim policy must not be null");
-        }
-
-        checkTruncateBeforeAction();
-
-        DetectReport initialReport = detect();
-        if (!initialReport.result().isDeadlocked()) {
-            throw new IllegalStateException("No deadlock to recover from");
-        }
+        requireScenario();
+        if (policy == null) throw new IllegalArgumentException("Victim policy must not be null");
+        DetectionResult current = detect().result();
+        if (!current.isDeadlocked()) throw new SimulationException(NO_DEADLOCK, "No deadlock to recover from");
 
         List<RecoveryRound> rounds = new ArrayList<>();
-        DetectionResult currentResult = initialReport.result();
-        int maxRounds = scenario.getProcesses().size();
-        int roundCount = 0;
-        boolean resolved = false;
-
-        while (!currentResult.getProcessIds().isEmpty()) {
-            if (roundCount >= maxRounds) {
-                history.add(EventType.RESOLVED, "Recovery failed", Snapshot.capture(scenario));
-                break;
+        while (current.isDeadlocked()) {
+            List<Process> eligible = new ArrayList<>();
+            for (Process process : scenario.getProcesses()) {
+                if (current.recoveryResource(process.getId()) != null) eligible.add(process);
             }
-            roundCount++;
+            if (eligible.isEmpty()) break;
 
-            List<String> deadlockedIds = currentResult.getProcessIds();
-            List<Process> deadlockedProcesses = new ArrayList<>();
-            for (Process p : scenario.getProcesses()) {
-                if (deadlockedIds.contains(p.getId())) {
-                    deadlockedProcesses.add(p);
-                }
-            }
-            Process victim = policy.selectVictim(deadlockedProcesses);
-            history.add(EventType.VICTIM_SELECTED, "Victim selected: " + victim.getId(), Snapshot.capture(scenario));
-
-            String strategyName;
+            Process victim = policy.selectVictim(eligible);
+            if (!eligible.contains(victim)) break;
+            record(EventType.VICTIM_SELECTED, "Victim selected: " + victim.getId());
+            String strategy;
             if (usePreempt) {
-                if (!scenario.getPreventionToggles().isNoPreemption()) {
-                    throw new IllegalStateException("Preemption is disabled");
-                }
-                strategyName = "PREEMPT";
-                String resId = victim.getHeld().keySet().stream()
-                        .min(String::compareTo)
-                        .orElseThrow(() -> new IllegalStateException("Victim holds no resources to preempt"));
-                new Preempt(resId).apply(scenario, victim);
-                history.add(EventType.PREEMPT, "Preempted resource " + resId + " from victim " + victim.getId(), Snapshot.capture(scenario));
-                history.add(EventType.ROLLBACK, "Rolled back victim " + victim.getId(), Snapshot.capture(scenario));
+                strategy = "PREEMPT";
+                String resource = current.recoveryResource(victim.getId());
+                new Preempt(resource).apply(scenario, victim);
+                record(EventType.PREEMPT, "Preempted resource " + resource + " from victim " + victim.getId());
+                record(EventType.ROLLBACK, "Rolled back victim " + victim.getId());
             } else {
-                strategyName = "TERMINATE";
+                strategy = "TERMINATE";
                 new Terminate().apply(scenario, victim);
-                history.add(EventType.TERMINATE, "Terminated victim " + victim.getId(), Snapshot.capture(scenario));
+                record(EventType.TERMINATE, "Terminated victim " + victim.getId());
             }
 
             wakeWaitingProcesses();
-
-            boolean hasWaiting = scenario.getProcesses().stream().anyMatch(Process::isWaiting);
-            DetectReport nextReport;
-            if (!hasWaiting) {
-                for (Process p : scenario.getProcesses()) {
-                    p.setDeadlocked(false);
-                }
-                boolean allSingle = scenario.getResources().stream().allMatch(r -> r.getTotal() == 1);
-                history.add(EventType.DETECT, "No deadlock detected", Snapshot.capture(scenario));
-                nextReport = new DetectReport(allSingle ? "CYCLE" : "BANKERS", DetectionResult.none());
-            } else {
-                nextReport = detect();
-            }
-
-            currentResult = nextReport.result();
-            boolean roundResolved = !currentResult.isDeadlocked();
-            rounds.add(new RecoveryRound(victim.getId(), strategyName, roundResolved));
-
-            if (roundResolved) {
-                history.add(EventType.RESOLVED, "Deadlock resolved", Snapshot.capture(scenario));
-                resolved = true;
-                break;
-            }
+            current = detectCurrentState().result();
+            rounds.add(new RecoveryRound(victim.getId(), strategy, !current.isDeadlocked()));
         }
-
+        record(EventType.RESOLVED, current.isDeadlocked() ? "Recovery failed" : "Deadlock resolved");
         updateViewedSeq();
-        return new RecoveryReport(rounds, resolved);
-    }
-
-    private boolean isShared() {
-        return scenario != null && scenario.getPreventionToggles().isMutualExclusion();
+        return new RecoveryReport(rounds, !current.isDeadlocked());
     }
 
     public Scenario getScenario() {
@@ -440,7 +431,7 @@ public class SimulationEngine {
 
     public void jumpTo(int seq) {
         if (scenario == null) {
-            throw new IllegalStateException("No scenario loaded");
+            throw new SimulationException(NO_SCENARIO, "No scenario loaded");
         }
         Snapshot snapshot = history.jumpTo(seq);
         snapshot.restoreInto(scenario);

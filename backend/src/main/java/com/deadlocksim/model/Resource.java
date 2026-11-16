@@ -8,6 +8,9 @@ public class Resource {
     private final boolean shareable;
 
     public Resource(String id, int total, boolean shareable) {
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("Resource ID must not be null or blank");
+        }
         if (total <= 0) {
             throw new IllegalArgumentException("Total instances must be greater than zero");
         }
@@ -57,7 +60,7 @@ public class Resource {
         if (n <= 0) {
             throw new IllegalArgumentException("Release count must be greater than zero");
         }
-        if (available + n > total) {
+        if (n > total - available) {
             throw new IllegalStateException("Releasing instances would exceed total instances");
         }
         available += n;

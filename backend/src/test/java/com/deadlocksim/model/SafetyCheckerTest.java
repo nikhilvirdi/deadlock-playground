@@ -30,6 +30,9 @@ class SafetyCheckerTest {
         scenario.addProcess(p1);
         scenario.addProcess(p2);
 
+        scenario.addOperation(new Operation("P1", OperationType.REQUEST, "R1", 2));
+        scenario.addOperation(new Operation("P2", OperationType.REQUEST, "R1", 2));
+
         SafetyResult result = SafetyChecker.check(scenario, "P1", "R1", 1);
 
         assertTrue(result.isSafe());
@@ -38,12 +41,11 @@ class SafetyCheckerTest {
         assertNotNull(result.reason());
         assertEquals(2, result.getSequence().size());
         assertEquals(result.getSequence(), result.sequence());
-        assertTrue(result.getSequence().contains("P1"));
-        assertTrue(result.getSequence().contains("P2"));
+        assertEquals(List.of("P1", "P2"), result.getSequence());
     }
 
     @Test
-    void grantThatLeavesNoSafeOrderReturnsUnsafeWithReasonNamingProcessAndResource() {
+    void grantThatLeavesNoSafeOrderReturnsUnsafeWithReasonNamingStuckProcesses() {
         Scenario scenario = new Scenario("Unsafe Grant Scenario");
         Resource r1 = new Resource("R1", 2, false);
         Resource r2 = new Resource("R2", 2, false);
@@ -65,13 +67,18 @@ class SafetyCheckerTest {
         scenario.addProcess(p1);
         scenario.addProcess(p2);
 
+        scenario.addOperation(new Operation("P1", OperationType.REQUEST, "R1", 2));
+        scenario.addOperation(new Operation("P1", OperationType.REQUEST, "R2", 2));
+        scenario.addOperation(new Operation("P2", OperationType.REQUEST, "R2", 1));
+        scenario.addOperation(new Operation("P2", OperationType.REQUEST, "R1", 2));
+
         SafetyResult result = SafetyChecker.check(scenario, "P1", "R1", 1);
 
         assertFalse(result.isSafe());
         assertFalse(result.safe());
         assertNotNull(result.getReason());
-        assertTrue(result.getReason().contains("P1") || result.getReason().contains("P2"));
-        assertTrue(result.getReason().contains("R1") || result.getReason().contains("R2"));
+        assertTrue(result.getReason().contains("[P1, P2]"));
+        assertTrue(result.getSequence().isEmpty());
     }
 
     @Test
@@ -108,6 +115,11 @@ class SafetyCheckerTest {
         int p1HeldBefore = p1.totalHeld();
         int p2HeldBefore = p2.totalHeld();
 
+        scenario.addOperation(new Operation("P1", OperationType.REQUEST, "R1", 2));
+        scenario.addOperation(new Operation("P1", OperationType.REQUEST, "R2", 2));
+        scenario.addOperation(new Operation("P2", OperationType.REQUEST, "R2", 1));
+        scenario.addOperation(new Operation("P2", OperationType.REQUEST, "R1", 2));
+
         SafetyChecker.check(scenario, "P1", "R1", 1);
 
         assertEquals(r1AvailableBefore, r1.getAvailable());
@@ -128,7 +140,8 @@ class SafetyCheckerTest {
         safeScenario.addResource(safeR);
         safeScenario.addProcess(safeP);
 
-        SafetyChecker.check(safeScenario, "P1", "R1", 1);
+        safeScenario.addOperation(new Operation("P1", OperationType.REQUEST, "R1", 1));
+        assertTrue(SafetyChecker.check(safeScenario, "P1", "R1", 1).isSafe());
         assertEquals(2, safeR.getAvailable());
         assertEquals(0, safeP.totalHeld());
         assertEquals(ProcessState.RUNNING, safeP.getState());

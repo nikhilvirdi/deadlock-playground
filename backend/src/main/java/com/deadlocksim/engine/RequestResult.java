@@ -1,5 +1,10 @@
 package com.deadlocksim.engine;
 
-public record RequestResult(RequestOutcome outcome, String reason) {
+import com.deadlocksim.model.SafetyResult;
+
+public record RequestResult(RequestOutcome outcome, String reason, SafetyResult safety) {
+    public RequestResult(RequestOutcome outcome, String reason) {
+        this(outcome, reason, null);
+    }
 }
 

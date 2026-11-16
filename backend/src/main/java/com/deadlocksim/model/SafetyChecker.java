@@ -1,69 +1,71 @@
 package com.deadlocksim.model;
 
-import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 public final class SafetyChecker {
     private SafetyChecker() {}
 
-    public static SafetyResult check(Scenario s, String processId, String resourceId, int count) {
-        if (s == null) {
-            throw new IllegalArgumentException("Scenario must not be null");
+    public static SafetyResult check(Scenario scenario, String processId, String resourceId, int count) {
+        if (scenario == null || processId == null || resourceId == null || count <= 0) {
+            throw new IllegalArgumentException("Scenario, process, resource and positive count are required");
         }
-        if (processId == null || processId.isBlank()) {
-            throw new IllegalArgumentException("Process ID must not be null or blank");
-        }
-        if (resourceId == null || resourceId.isBlank()) {
-            throw new IllegalArgumentException("Resource ID must not be null or blank");
-        }
-        if (count <= 0) {
-            throw new IllegalArgumentException("Count must be greater than zero");
-        }
-
-        Process process = s.getProcesses().stream()
-                .filter(p -> p.getId().equals(processId))
-                .findFirst()
+        Process process = scenario.getProcesses().stream().filter(p -> p.getId().equals(processId)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Unknown process: " + processId));
+        scenario.resource(resourceId);
+        return check(scenario, process, Map.of(resourceId, count));
+    }
 
-        Resource resource = s.getResources().stream()
-                .filter(r -> r.getId().equals(resourceId))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown resource: " + resourceId));
+    public static SafetyResult check(Scenario scenario, Process requester, Map<String, Integer> request) {
+        if (!scenario.getProcesses().contains(requester) || requester.isTerminal()) {
+            throw new IllegalArgumentException("An active requesting process must belong to the scenario");
+        }
+        request.forEach((id, count) -> {
+            scenario.resource(id);
+            if (count <= 0) throw new IllegalArgumentException("Count must be greater than zero");
+        });
+        Map<String, Long> work = new LinkedHashMap<>();
+        Map<String, Map<String, Integer>> allocations = new LinkedHashMap<>();
+        Map<String, Map<String, Integer>> needs = new LinkedHashMap<>();
 
-        if (resource.getAvailable() < count) {
-            return SafetyResult.unsafe("Insufficient available instances of resource " + resourceId, Collections.emptyList());
+        for (Resource resource : scenario.getResources()) {
+            if (scenario.isShared(resource)) continue;
+            String id = resource.getId();
+            long remaining = (long) resource.getAvailable() - request.getOrDefault(id, 0);
+            if (remaining < 0) {
+                return SafetyResult.unsafe("Insufficient available instances of resource " + id, List.of());
+            }
+            work.put(id, remaining);
         }
 
-        boolean wasWaiting = process.isWaiting();
-        String prevWaitRes = process.getWaitingResourceId();
-        int prevWaitCount = process.getWaitingCount();
-
-        resource.grant(count);
-        process.holdInstances(resourceId, count);
-        if (wasWaiting && resourceId.equals(prevWaitRes) && count >= prevWaitCount) {
-            process.clearWaitingFor();
+        for (Process process : scenario.getProcesses()) {
+            if (process.isTerminal()) continue;
+            Map<String, Integer> claim = scenario.maximumClaims(process.getId());
+            Map<String, Integer> held = process.getHeld();
+            Map<String, Integer> allocation = new LinkedHashMap<>();
+            Map<String, Integer> need = new LinkedHashMap<>();
+            for (Resource resource : scenario.getResources()) {
+                String id = resource.getId();
+                long count = (long) held.getOrDefault(id, 0) + (process == requester ? request.getOrDefault(id, 0) : 0);
+                int maximum = claim.getOrDefault(id, 0);
+                if (count > maximum) {
+                    return SafetyResult.unsafe("Allocation exceeds the declared claim of " + process.getId()
+                            + " for " + id, List.of());
+                }
+                if (!scenario.isShared(resource)) {
+                    allocation.put(id, (int) count);
+                    need.put(id, maximum - (int) count);
+                }
+            }
+            allocations.put(process.getId(), allocation);
+            needs.put(process.getId(), need);
         }
 
-        try {
-            Map<String, Integer> work = new HashMap<>();
-            for (Resource r : s.getResources()) {
-                work.put(r.getId(), r.getAvailable());
-            }
-            BankersCore.FinishResult finishResult = BankersCore.run(s, work);
-            if (finishResult.stuck().isEmpty()) {
-                String reason = "Safe sequence: " + finishResult.sequence();
-                return SafetyResult.safe(reason, finishResult.sequence());
-            } else {
-                String reason = "Unsafe state: processes " + finishResult.stuck() + " cannot finish for resource " + resourceId;
-                return SafetyResult.unsafe(reason, finishResult.sequence());
-            }
-        } finally {
-            process.releaseInstances(resourceId, count);
-            resource.release(count);
-            if (wasWaiting && resourceId.equals(prevWaitRes) && count >= prevWaitCount) {
-                process.setWaitingFor(prevWaitRes, prevWaitCount);
-            }
+        BankersCore.FinishResult result = BankersCore.run(work, allocations, needs);
+        if (result.stuck().isEmpty()) {
+            return SafetyResult.safe("Safe sequence: " + result.sequence(), result.sequence());
         }
+        return SafetyResult.unsafe("Unsafe state: processes " + result.stuck() + " cannot finish", result.sequence());
     }
 }

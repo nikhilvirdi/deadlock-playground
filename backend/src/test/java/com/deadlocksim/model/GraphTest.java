@@ -3,11 +3,14 @@ package com.deadlocksim.model;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GraphTest {
@@ -91,10 +94,29 @@ class GraphTest {
 
         List<String> cycle = cycles.get(0);
         assertEquals(List.of("P1", "R2", "P2", "R1", "P1"), cycle);
+        assertEquals(Set.copyOf(graph.edges()), graph.cycleEdges());
+        assertEquals(cycle, Graph.firstCycle(graph.cycleEdges()));
         assertTrue(cycle.contains("P1"));
         assertTrue(cycle.contains("R1"));
         assertTrue(cycle.contains("P2"));
         assertTrue(cycle.contains("R2"));
+    }
+
+    @Test
+    void cycleEdgeQueryDoesNotEnumeratePathsAcrossBranchingLayers() {
+        Scenario scenario = new Scenario("Layered wait graph");
+        for (int layer = 0; layer <= 25; layer++) {
+            scenario.addResource(new Resource("R" + layer, 2, false));
+        }
+        for (int layer = 0; layer < 25; layer++) {
+            for (int branch = 0; branch < 2; branch++) {
+                Process process = new Process("P" + layer + "_" + branch, 1);
+                process.holdInstances("R" + layer, 1);
+                process.setWaitingFor("R" + (layer + 1), 1);
+                scenario.addProcess(process);
+            }
+        }
+        assertTimeoutPreemptively(Duration.ofSeconds(2), () -> assertTrue(new Graph(scenario).cycleEdges().isEmpty()));
     }
 
     @Test

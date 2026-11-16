@@ -11,8 +11,14 @@ public class Process {
     private boolean deadlocked;
     private final Map<String, Integer> held;
     private int instructionsExecuted;
-    private String waitingResourceId;
-    private int waitingCount;
+    private PendingRequest pendingRequest;
+
+    public record PendingRequest(String resourceId, int count, Map<String, Integer> demand,
+                                 int operationIndex, int operationCount) {
+        public PendingRequest {
+            demand = Collections.unmodifiableMap(new LinkedHashMap<>(demand));
+        }
+    }
     private int nextOperationIndex;
 
     public Process(String id, int priority) {
@@ -25,8 +31,6 @@ public class Process {
         this.deadlocked = false;
         this.held = new LinkedHashMap<>();
         this.instructionsExecuted = 0;
-        this.waitingResourceId = null;
-        this.waitingCount = 0;
         this.nextOperationIndex = 0;
     }
 
@@ -40,6 +44,10 @@ public class Process {
 
     public ProcessState getState() {
         return state;
+    }
+
+    public boolean isTerminal() {
+        return state == ProcessState.COMPLETED || state == ProcessState.TERMINATED;
     }
 
     public boolean isDeadlocked() {
@@ -59,7 +67,7 @@ public class Process {
     }
 
     public void advanceOperation() {
-        this.nextOperationIndex++;
+        this.nextOperationIndex = Math.incrementExact(this.nextOperationIndex);
     }
 
     void restoreNextOperationIndex(int index) {
@@ -91,35 +99,48 @@ public class Process {
         if (count <= 0) {
             throw new IllegalArgumentException("Count must be greater than zero");
         }
-        this.waitingResourceId = resourceId;
-        this.waitingCount = count;
+        setPendingRequest(new PendingRequest(resourceId, count, Map.of(resourceId, count), -1, 0));
+    }
+
+    public PendingRequest getPendingRequest() {
+        return pendingRequest;
+    }
+
+    public void setPendingRequest(PendingRequest request) {
+        this.pendingRequest = request;
     }
 
     public void clearWaitingFor() {
-        this.waitingResourceId = null;
-        this.waitingCount = 0;
+        this.pendingRequest = null;
     }
 
     public String getWaitingResourceId() {
-        return waitingResourceId;
+        return pendingRequest == null ? null : pendingRequest.resourceId();
     }
 
     public int getWaitingCount() {
-        return waitingCount;
+        return pendingRequest == null ? 0 : pendingRequest.count();
     }
 
     public boolean isWaiting() {
-        return waitingResourceId != null;
+        return pendingRequest != null;
     }
 
     public void holdInstances(String resourceId, int n) {
-        if (n <= 0) {
-            throw new IllegalArgumentException("Instance count must be greater than zero");
-        }
         if (resourceId == null || resourceId.isBlank()) {
             throw new IllegalArgumentException("Resource ID must not be null or blank");
         }
+        checkHoldingCapacity(n);
         held.put(resourceId, held.getOrDefault(resourceId, 0) + n);
+    }
+
+    public void checkHoldingCapacity(int count) {
+        if (count <= 0) {
+            throw new IllegalArgumentException("Instance count must be greater than zero");
+        }
+        if (count > Integer.MAX_VALUE - totalHeld()) {
+            throw new IllegalArgumentException("Total instances held by a process cannot exceed " + Integer.MAX_VALUE);
+        }
     }
 
     public void releaseInstances(String resourceId, int n) {
@@ -149,15 +170,18 @@ public class Process {
     }
 
     public void recordInstruction() {
-        this.instructionsExecuted++;
+        this.instructionsExecuted = Math.incrementExact(this.instructionsExecuted);
+    }
+
+    void restoreInstructionsExecuted(int count) {
+        this.instructionsExecuted = count;
     }
 
     public void rollbackState() {
         this.state = ProcessState.RUNNING;
         this.deadlocked = false;
         this.held.clear();
-        this.waitingResourceId = null;
-        this.waitingCount = 0;
+        clearWaitingFor();
         this.instructionsExecuted = 0;
         this.nextOperationIndex = 0;
     }
@@ -166,12 +190,17 @@ public class Process {
         if (newHeld == null) {
             throw new IllegalArgumentException("Held map must not be null");
         }
+        long total = 0;
         for (Map.Entry<String, Integer> entry : newHeld.entrySet()) {
             if (entry.getKey() == null || entry.getKey().isBlank()) {
                 throw new IllegalArgumentException("Resource ID must not be null or blank");
             }
             if (entry.getValue() == null || entry.getValue() <= 0) {
                 throw new IllegalArgumentException("Instance count must be greater than zero");
+            }
+            total += entry.getValue();
+            if (total > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("Total instances held by a process cannot exceed " + Integer.MAX_VALUE);
             }
         }
         this.held.clear();

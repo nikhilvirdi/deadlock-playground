@@ -197,9 +197,9 @@ class DetectRecoverTest {
     }
 
     @Test
-    void recoverWithUsePreemptAndNoPreemptionToggleOffThrowsIllegalStateException() {
+    void recoverWithPreemptWhenAutomaticReleaseIsOffResolvesDeadlock() {
         SimulationEngine engine = new SimulationEngine();
-        Scenario scenario = new Scenario("Preempt Disabled");
+        Scenario scenario = new Scenario("Automatic Release Disabled");
         Process p1 = new Process("P1", 1);
         Process p2 = new Process("P2", 2);
         Resource r1 = new Resource("R1", 1, false);
@@ -225,9 +225,12 @@ class DetectRecoverTest {
 
         engine.configure(scenario);
 
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> engine.recover(new RecoveryCostPolicy(), true));
-        assertEquals("Preemption is disabled", ex.getMessage());
+        RecoveryReport report = engine.recover(new RecoveryCostPolicy(), true);
+        assertTrue(report.resolved());
+        assertEquals("P1", report.rounds().get(0).victimId());
+        assertEquals(ProcessState.RUNNING, p1.getState());
+        assertTrue(p1.getHeld().isEmpty());
+        assertFalse(p2.isWaiting());
     }
 
     @Test

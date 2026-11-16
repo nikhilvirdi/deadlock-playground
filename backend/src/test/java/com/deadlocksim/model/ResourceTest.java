@@ -11,6 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ResourceTest {
+    @Test
+    void releaseCannotWrapAvailablePastIntegerMaximum() {
+        Resource resource = new Resource("R", Integer.MAX_VALUE, false);
+        assertThrows(IllegalStateException.class, () -> resource.release(1));
+        assertEquals(Integer.MAX_VALUE, resource.getAvailable());
+    }
+
 
     @Test
     void validResourceStartsAvailableEqualToTotal() {

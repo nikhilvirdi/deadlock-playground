@@ -1,89 +1,48 @@
 package com.deadlocksim.model;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 public final class BankersCore {
-
-    public record FinishResult(List<String> sequence, List<String> stuck) {
+    public record FinishResult(List<String> sequence, List<String> stuck, Map<String, Long> remaining) {
         public FinishResult {
-            sequence = Collections.unmodifiableList(new ArrayList<>(sequence));
-            stuck = Collections.unmodifiableList(new ArrayList<>(stuck));
+            sequence = List.copyOf(sequence);
+            stuck = List.copyOf(stuck);
+            remaining = Map.copyOf(remaining);
         }
     }
 
     private BankersCore() {
     }
 
-    public static FinishResult run(Scenario s, Map<String, Integer> workAvailable) {
-        if (s == null) {
-            throw new IllegalArgumentException("Scenario must not be null");
-        }
-        Map<String, Integer> work = new HashMap<>(workAvailable != null ? workAvailable : Collections.emptyMap());
-
+    public static FinishResult run(Map<String, Long> available,
+                                   Map<String, Map<String, Integer>> allocations,
+                                   Map<String, Map<String, Integer>> needs) {
+        Map<String, Long> work = new LinkedHashMap<>(available);
         List<String> sequence = new ArrayList<>();
         Set<String> finished = new HashSet<>();
 
-        List<String> alreadyFinished = new ArrayList<>();
-        for (Process p : s.getProcesses()) {
-            boolean isCompletedOrTerminated = p.getState() == ProcessState.COMPLETED
-                    || p.getState() == ProcessState.TERMINATED;
-            boolean holdsNothingAndNotWaiting = p.totalHeld() == 0 && !p.isWaiting();
-            if (isCompletedOrTerminated || holdsNothingAndNotWaiting) {
-                alreadyFinished.add(p.getId());
-                for (Map.Entry<String, Integer> entry : p.getHeld().entrySet()) {
-                    work.put(entry.getKey(), work.getOrDefault(entry.getKey(), 0) + entry.getValue());
-                }
-            }
-        }
-        Collections.sort(alreadyFinished);
-        for (String id : alreadyFinished) {
-            sequence.add(id);
-            finished.add(id);
-        }
-
-        boolean progress = true;
-        while (progress) {
+        boolean progress;
+        do {
             progress = false;
-            for (Process p : s.getProcesses()) {
-                if (finished.contains(p.getId())) {
+            for (var entry : needs.entrySet()) {
+                String id = entry.getKey();
+                if (finished.contains(id) || entry.getValue().entrySet().stream()
+                        .anyMatch(need -> need.getValue() > work.getOrDefault(need.getKey(), 0L))) {
                     continue;
                 }
-
-                boolean canFinish = false;
-                if (!p.isWaiting()) {
-                    canFinish = true;
-                } else {
-                    int availableForWait = work.getOrDefault(p.getWaitingResourceId(), 0);
-                    if (p.getWaitingCount() <= availableForWait) {
-                        canFinish = true;
-                    }
-                }
-
-                if (canFinish) {
-                    for (Map.Entry<String, Integer> entry : p.getHeld().entrySet()) {
-                        work.put(entry.getKey(), work.getOrDefault(entry.getKey(), 0) + entry.getValue());
-                    }
-                    sequence.add(p.getId());
-                    finished.add(p.getId());
-                    progress = true;
-                    break;
-                }
+                allocations.get(id).forEach((resource, count) -> work.merge(resource, count.longValue(), Long::sum));
+                sequence.add(id);
+                finished.add(id);
+                progress = true;
             }
-        }
+        } while (progress);
 
-        List<String> stuck = new ArrayList<>();
-        for (Process p : s.getProcesses()) {
-            if (!finished.contains(p.getId())) {
-                stuck.add(p.getId());
-            }
-        }
-
-        return new FinishResult(sequence, stuck);
+        List<String> stuck = needs.keySet().stream().filter(id -> !finished.contains(id)).toList();
+        return new FinishResult(sequence, stuck, work);
     }
 }
