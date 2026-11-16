@@ -20,6 +20,7 @@ export function renderConfigureForm(container, onConfigured) {
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.id = 'cfg-name';
+    nameInput.placeholder = 'Scenario Name';
     nameLabel.appendChild(nameInput);
     nameGroup.appendChild(nameLabel);
     form.appendChild(nameGroup);
@@ -35,7 +36,7 @@ export function renderConfigureForm(container, onConfigured) {
     resList.className = 'resource-list';
     resGroup.appendChild(resList);
 
-    function addResourceRow(defaultId = '', defaultTotal = 1, defaultShareable = false) {
+    function addResourceRow(defaultId = '', defaultTotal = '', defaultShareable = false) {
         const row = document.createElement('div');
         row.className = 'resource-row';
 
@@ -44,7 +45,10 @@ export function renderConfigureForm(container, onConfigured) {
         const idInput = document.createElement('input');
         idInput.type = 'text';
         idInput.className = 'cfg-res-id';
-        idInput.value = defaultId;
+        idInput.placeholder = 'R1';
+        if (defaultId) {
+            idInput.value = defaultId;
+        }
         idLabel.appendChild(idInput);
         row.appendChild(idLabel);
 
@@ -54,7 +58,10 @@ export function renderConfigureForm(container, onConfigured) {
         totalInput.type = 'number';
         totalInput.min = '1';
         totalInput.className = 'cfg-res-total';
-        totalInput.value = defaultTotal;
+        totalInput.placeholder = '1';
+        if (defaultTotal !== '' && defaultTotal !== null && defaultTotal !== undefined) {
+            totalInput.value = defaultTotal;
+        }
         totalLabel.appendChild(totalInput);
         row.appendChild(totalLabel);
 
@@ -63,21 +70,20 @@ export function renderConfigureForm(container, onConfigured) {
         const shareInput = document.createElement('input');
         shareInput.type = 'checkbox';
         shareInput.className = 'cfg-res-shareable';
-        shareInput.checked = defaultShareable;
+        shareInput.checked = Boolean(defaultShareable);
         shareLabel.appendChild(shareInput);
         row.appendChild(shareLabel);
 
         resList.appendChild(row);
     }
 
-    addResourceRow('R1', 1, false);
+    addResourceRow();
 
     const addResBtn = document.createElement('button');
     addResBtn.type = 'button';
     addResBtn.textContent = 'Add resource';
     addResBtn.addEventListener('click', () => {
-        const count = resList.children.length + 1;
-        addResourceRow('R' + count, 1, false);
+        addResourceRow();
     });
     resGroup.appendChild(addResBtn);
     form.appendChild(resGroup);
@@ -93,7 +99,7 @@ export function renderConfigureForm(container, onConfigured) {
     procList.className = 'process-list-inputs';
     procGroup.appendChild(procList);
 
-    function addProcessRow(defaultId = '', defaultPriority = 1) {
+    function addProcessRow(defaultId = '', defaultPriority = '') {
         const row = document.createElement('div');
         row.className = 'process-row';
 
@@ -102,7 +108,10 @@ export function renderConfigureForm(container, onConfigured) {
         const idInput = document.createElement('input');
         idInput.type = 'text';
         idInput.className = 'cfg-proc-id';
-        idInput.value = defaultId;
+        idInput.placeholder = 'P1';
+        if (defaultId) {
+            idInput.value = defaultId;
+        }
         idLabel.appendChild(idInput);
         row.appendChild(idLabel);
 
@@ -111,21 +120,23 @@ export function renderConfigureForm(container, onConfigured) {
         const prioInput = document.createElement('input');
         prioInput.type = 'number';
         prioInput.className = 'cfg-proc-priority';
-        prioInput.value = defaultPriority;
+        prioInput.placeholder = '1';
+        if (defaultPriority !== '' && defaultPriority !== null && defaultPriority !== undefined) {
+            prioInput.value = defaultPriority;
+        }
         prioLabel.appendChild(prioInput);
         row.appendChild(prioLabel);
 
         procList.appendChild(row);
     }
 
-    addProcessRow('P1', 1);
+    addProcessRow();
 
     const addProcBtn = document.createElement('button');
     addProcBtn.type = 'button';
     addProcBtn.textContent = 'Add process';
     addProcBtn.addEventListener('click', () => {
-        const count = procList.children.length + 1;
-        addProcessRow('P' + count, 1);
+        addProcessRow();
     });
     procGroup.appendChild(addProcBtn);
     form.appendChild(procGroup);
@@ -334,4 +345,19 @@ export function renderConfigureForm(container, onConfigured) {
     });
 
     target.appendChild(form);
+}
+
+export function syncPreventionToggles(state) {
+    const actualState = (state && state.state) ? state.state : state;
+    const prev = (actualState && actualState.prevention) ? actualState.prevention : null;
+    if (!prev) {
+        return;
+    }
+    const keys = ['mutualExclusion', 'holdAndWait', 'noPreemption', 'circularWait'];
+    for (const key of keys) {
+        const el = document.getElementById('cfg-prev-' + key);
+        if (el && typeof prev[key] === 'boolean') {
+            el.checked = prev[key];
+        }
+    }
 }

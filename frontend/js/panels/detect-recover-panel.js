@@ -30,7 +30,7 @@ function createDetectSection(container) {
 
     btnDetect = document.createElement('button');
     btnDetect.type = 'button';
-    btnDetect.id = 'btn-action-detect';
+    btnDetect.id = 'btn-detect';
     btnDetect.textContent = 'Detect';
     btnRow.appendChild(btnDetect);
     group.appendChild(btnRow);
@@ -68,14 +68,6 @@ function createDetectSection(container) {
             showError('detect-error-line', err);
         }
     });
-
-    const topBtnDetect = document.getElementById('btn-detect');
-    if (topBtnDetect && !topBtnDetect.dataset.wired) {
-        topBtnDetect.dataset.wired = 'true';
-        topBtnDetect.addEventListener('click', () => {
-            if (btnDetect) btnDetect.click();
-        });
-    }
 
     container.appendChild(group);
 }
@@ -137,7 +129,7 @@ function createRecoverSection(container) {
 
     btnRecover = document.createElement('button');
     btnRecover.type = 'button';
-    btnRecover.id = 'btn-action-recover';
+    btnRecover.id = 'btn-recover';
     btnRecover.textContent = 'Recover';
     btnRow.appendChild(btnRecover);
     group.appendChild(btnRow);
@@ -174,14 +166,6 @@ function createRecoverSection(container) {
         }
     });
 
-    const topBtnRecover = document.getElementById('btn-recover');
-    if (topBtnRecover && !topBtnRecover.dataset.wired) {
-        topBtnRecover.dataset.wired = 'true';
-        topBtnRecover.addEventListener('click', () => {
-            if (btnRecover) btnRecover.click();
-        });
-    }
-
     container.appendChild(group);
 }
 
@@ -198,7 +182,7 @@ function createResetSection(container) {
 
     btnReset = document.createElement('button');
     btnReset.type = 'button';
-    btnReset.id = 'btn-action-reset';
+    btnReset.id = 'btn-reset';
     btnReset.textContent = 'Reset';
     btnRow.appendChild(btnReset);
     group.appendChild(btnRow);
@@ -237,14 +221,6 @@ function createResetSection(container) {
             }
         }
     });
-
-    const topBtnReset = document.getElementById('btn-reset');
-    if (topBtnReset && !topBtnReset.dataset.wired) {
-        topBtnReset.dataset.wired = 'true';
-        topBtnReset.addEventListener('click', () => {
-            if (btnReset) btnReset.click();
-        });
-    }
 
     container.appendChild(group);
 }

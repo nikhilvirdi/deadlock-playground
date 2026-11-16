@@ -13,7 +13,7 @@ import {
 } from './api/endpoints.js';
 import { renderProcessPanel } from './panels/process-panel.js';
 import { renderResourcePanel } from './panels/resource-panel.js';
-import { renderConfigureForm } from './panels/configure-form.js';
+import { renderConfigureForm, syncPreventionToggles } from './panels/configure-form.js';
 import { renderActionPanel } from './panels/action-panel.js';
 import { renderDetectRecoverPanel } from './panels/detect-recover-panel.js';
 import { renderHistoryPanel } from './panels/history-panel.js';
@@ -68,6 +68,7 @@ export async function jump(seq) {
         renderGraph(jumpedState);
         renderActionPanel(jumpedState, refresh);
         renderDetectRecoverPanel(jumpedState, refresh);
+        syncPreventionToggles(jumpedState);
 
         const hist = await getHistory();
         currentEvents = hist && hist.events ? hist.events : (Array.isArray(hist) ? hist : []);
@@ -87,6 +88,7 @@ export async function refresh() {
         renderGraph(result);
         renderActionPanel(result, refresh);
         renderDetectRecoverPanel(result, refresh);
+        syncPreventionToggles(result);
 
         const hist = await getHistory();
         currentEvents = hist && hist.events ? hist.events : (Array.isArray(hist) ? hist : []);
@@ -152,34 +154,6 @@ export function init() {
         const submitBtn = document.getElementById('btn-submit-configure');
         if (form && submitBtn) {
             submitBtn.classList.add('btn-primary');
-
-            const controlsGrid = document.createElement('div');
-            controlsGrid.className = 'controls-grid';
-
-            const buttonDefs = [
-                { id: 'btn-request', text: 'Request' },
-                { id: 'btn-release', text: 'Release' },
-                { id: 'btn-step', text: 'Step' },
-                { id: 'btn-detect', text: 'Detect' },
-                { id: 'btn-recover', text: 'Recover' },
-                { id: 'btn-reset', text: 'Reset' }
-            ];
-
-            buttonDefs.forEach(b => {
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.id = b.id;
-                btn.textContent = b.text;
-                btn.className = 'btn-primary';
-                controlsGrid.appendChild(btn);
-            });
-
-            const actionGroup = submitBtn.closest('.form-group');
-            if (actionGroup) {
-                form.insertBefore(controlsGrid, actionGroup);
-            } else {
-                form.appendChild(controlsGrid);
-            }
         }
     }
     renderDetectRecoverPanel(null, refresh);

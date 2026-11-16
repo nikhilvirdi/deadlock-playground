@@ -1,5 +1,4 @@
 import {
-    setPreventionToggles,
     requestResource,
     releaseResource,
     step
@@ -9,12 +8,6 @@ import { showError, clearError } from './feedback.js';
 let initialized = false;
 let refreshHandler = null;
 
-let chkMutualExclusion = null;
-let chkHoldAndWait = null;
-let chkNoPreemption = null;
-let chkCircularWait = null;
-let prevErrorLine = null;
-
 let procSelect = null;
 let resSelect = null;
 let countInput = null;
@@ -23,81 +16,6 @@ let btnRelease = null;
 let btnStep = null;
 let resultLine = null;
 let opErrorLine = null;
-
-let lastState = {
-    mutualExclusion: false,
-    holdAndWait: false,
-    noPreemption: false,
-    circularWait: false
-};
-
-function createPreventionSection(container) {
-    const group = document.createElement('div');
-    group.className = 'form-group prevention-controls';
-
-    const heading = document.createElement('h3');
-    heading.textContent = 'Prevention';
-    group.appendChild(heading);
-
-    const togglesList = document.createElement('div');
-    togglesList.className = 'prevention-toggles';
-
-    function createCheckbox(id, labelText) {
-        const label = document.createElement('label');
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.id = id;
-        label.appendChild(input);
-        const text = document.createTextNode(' ' + labelText);
-        label.appendChild(text);
-        togglesList.appendChild(label);
-        return input;
-    }
-
-    chkMutualExclusion = createCheckbox('action-prev-mutualExclusion', 'Mutual exclusion');
-    chkHoldAndWait = createCheckbox('action-prev-holdAndWait', 'Hold and wait');
-    chkNoPreemption = createCheckbox('action-prev-noPreemption', 'No preemption');
-    chkCircularWait = createCheckbox('action-prev-circularWait', 'Circular wait');
-
-    group.appendChild(togglesList);
-
-    prevErrorLine = document.createElement('div');
-    prevErrorLine.id = 'action-prev-error';
-    prevErrorLine.className = 'error-line';
-    group.appendChild(prevErrorLine);
-
-    async function handleToggleChange() {
-        clearError('action-prev-error');
-        const prevValues = { ...lastState };
-        const newValues = {
-            mutualExclusion: chkMutualExclusion.checked,
-            holdAndWait: chkHoldAndWait.checked,
-            noPreemption: chkNoPreemption.checked,
-            circularWait: chkCircularWait.checked
-        };
-
-        try {
-            await setPreventionToggles(newValues);
-            lastState = { ...newValues };
-            if (typeof refreshHandler === 'function') {
-                await refreshHandler();
-            }
-        } catch (err) {
-            showError('action-prev-error', err);
-            chkMutualExclusion.checked = prevValues.mutualExclusion;
-            chkHoldAndWait.checked = prevValues.holdAndWait;
-            chkNoPreemption.checked = prevValues.noPreemption;
-            chkCircularWait.checked = prevValues.circularWait;
-        }
-    }
-
-    chkMutualExclusion.addEventListener('change', handleToggleChange);
-    chkHoldAndWait.addEventListener('change', handleToggleChange);
-    chkNoPreemption.addEventListener('change', handleToggleChange);
-    chkCircularWait.addEventListener('change', handleToggleChange);
-
-    container.appendChild(group);
-}
 
 function createActionSection(container) {
     const group = document.createElement('div');
@@ -129,8 +47,8 @@ function createActionSection(container) {
     countInput = document.createElement('input');
     countInput.type = 'number';
     countInput.id = 'action-count-input';
-    countInput.value = '1';
     countInput.min = '1';
+    countInput.placeholder = '1';
     countLabel.appendChild(countInput);
     controlsRow.appendChild(countLabel);
 
@@ -141,19 +59,19 @@ function createActionSection(container) {
 
     btnRequest = document.createElement('button');
     btnRequest.type = 'button';
-    btnRequest.id = 'btn-action-request';
+    btnRequest.id = 'btn-request';
     btnRequest.textContent = 'Request';
     btnRow.appendChild(btnRequest);
 
     btnRelease = document.createElement('button');
     btnRelease.type = 'button';
-    btnRelease.id = 'btn-action-release';
+    btnRelease.id = 'btn-release';
     btnRelease.textContent = 'Release';
     btnRow.appendChild(btnRelease);
 
     btnStep = document.createElement('button');
     btnStep.type = 'button';
-    btnStep.id = 'btn-action-step';
+    btnStep.id = 'btn-step';
     btnStep.textContent = 'Step';
     btnRow.appendChild(btnStep);
 
@@ -234,8 +152,6 @@ function createActionSection(container) {
             const desc = data.executed ? data.executed.description : '';
             if (data.finished) {
                 btnStep.disabled = true;
-                const topStep = document.getElementById('btn-step');
-                if (topStep) topStep.disabled = true;
                 resultLine.textContent = desc ? `${desc} (Scenario finished)` : 'Scenario finished';
             } else {
                 resultLine.textContent = desc || 'Step executed';
@@ -244,30 +160,6 @@ function createActionSection(container) {
             showError('action-op-error', err);
         }
     });
-
-    const topBtnRequest = document.getElementById('btn-request');
-    if (topBtnRequest && !topBtnRequest.dataset.wired) {
-        topBtnRequest.dataset.wired = 'true';
-        topBtnRequest.addEventListener('click', () => {
-            if (btnRequest) btnRequest.click();
-        });
-    }
-
-    const topBtnRelease = document.getElementById('btn-release');
-    if (topBtnRelease && !topBtnRelease.dataset.wired) {
-        topBtnRelease.dataset.wired = 'true';
-        topBtnRelease.addEventListener('click', () => {
-            if (btnRelease) btnRelease.click();
-        });
-    }
-
-    const topBtnStep = document.getElementById('btn-step');
-    if (topBtnStep && !topBtnStep.dataset.wired) {
-        topBtnStep.dataset.wired = 'true';
-        topBtnStep.addEventListener('click', () => {
-            if (btnStep) btnStep.click();
-        });
-    }
 
     container.appendChild(group);
 }
@@ -306,26 +198,11 @@ export function renderActionPanel(state, onRefresh) {
 
     if (!initialized) {
         container.textContent = '';
-        createPreventionSection(container);
         createActionSection(container);
         initialized = true;
     }
 
     const actualState = (state && state.state) ? state.state : state;
-    const prev = (actualState && actualState.prevention) ? actualState.prevention : {};
-
-    lastState = {
-        mutualExclusion: Boolean(prev.mutualExclusion),
-        holdAndWait: Boolean(prev.holdAndWait),
-        noPreemption: Boolean(prev.noPreemption),
-        circularWait: Boolean(prev.circularWait)
-    };
-
-    if (chkMutualExclusion) chkMutualExclusion.checked = lastState.mutualExclusion;
-    if (chkHoldAndWait) chkHoldAndWait.checked = lastState.holdAndWait;
-    if (chkNoPreemption) chkNoPreemption.checked = lastState.noPreemption;
-    if (chkCircularWait) chkCircularWait.checked = lastState.circularWait;
-
     const processes = (actualState && Array.isArray(actualState.processes)) ? actualState.processes : [];
     const resources = (actualState && Array.isArray(actualState.resources)) ? actualState.resources : [];
 
@@ -336,8 +213,6 @@ export function renderActionPanel(state, onRefresh) {
         const totalPending = actualState.processes.reduce((sum, p) => sum + (p.pendingOperations || 0), 0);
         if (totalPending > 0) {
             if (btnStep) btnStep.disabled = false;
-            const topStep = document.getElementById('btn-step');
-            if (topStep) topStep.disabled = false;
         }
     }
 }
