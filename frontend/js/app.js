@@ -92,11 +92,7 @@ export async function refresh() {
 
         const hist = await getHistory();
         currentEvents = hist && hist.events ? hist.events : (Array.isArray(hist) ? hist : []);
-        if (currentEvents.length > 0) {
-            currentSeq = currentEvents[currentEvents.length - 1].seq;
-        } else {
-            currentSeq = null;
-        }
+        currentSeq = currentEvents.length > 0 ? (result.state ?? result).step : null;
         renderHistoryPanel(currentEvents, currentSeq, jump);
         updateHistoryButtons(currentEvents, currentSeq);
     } catch (err) {

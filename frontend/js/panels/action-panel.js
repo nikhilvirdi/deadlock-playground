@@ -21,29 +21,25 @@ function createActionSection(container) {
     const group = document.createElement('div');
     group.className = 'form-group simulation-actions';
 
-    const heading = document.createElement('h3');
-    heading.textContent = 'Operations';
-    group.appendChild(heading);
-
     const controlsRow = document.createElement('div');
     controlsRow.className = 'action-inputs-row';
 
     const procLabel = document.createElement('label');
-    procLabel.textContent = 'Process: ';
+    procLabel.textContent = 'Process';
     procSelect = document.createElement('select');
     procSelect.id = 'action-proc-select';
     procLabel.appendChild(procSelect);
     controlsRow.appendChild(procLabel);
 
     const resLabel = document.createElement('label');
-    resLabel.textContent = ' Resource: ';
+    resLabel.textContent = 'Resource';
     resSelect = document.createElement('select');
     resSelect.id = 'action-res-select';
     resLabel.appendChild(resSelect);
     controlsRow.appendChild(resLabel);
 
     const countLabel = document.createElement('label');
-    countLabel.textContent = ' Count: ';
+    countLabel.textContent = 'Count';
     countInput = document.createElement('input');
     countInput.type = 'number';
     countInput.id = 'action-count-input';

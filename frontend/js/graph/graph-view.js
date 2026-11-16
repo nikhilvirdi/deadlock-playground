@@ -42,18 +42,17 @@ export function getCy() {
 }
 
 export function renderGraph(state) {
-    const container = document.getElementById('graph');
+    const container = document.getElementById('graph-canvas');
     if (!container) {
         return;
     }
 
+    const actualState = (state && state.state) ? state.state : state;
+    document.getElementById('graph-empty').hidden = Boolean(actualState);
+
     if (!cy) {
         if (typeof cytoscape !== 'undefined' && typeof cytoscapeDagre !== 'undefined') {
             cytoscape.use(cytoscapeDagre);
-        }
-        const placeholder = container.querySelector('.placeholder-text');
-        if (placeholder) {
-            placeholder.remove();
         }
         cy = cytoscape({
             container,
@@ -67,6 +66,8 @@ export function renderGraph(state) {
                         'text-valign': 'center',
                         'text-halign': 'center',
                         'text-wrap': 'wrap',
+                        'text-overflow-wrap': 'anywhere',
+                        'text-max-width': '160px',
                         'padding': '8px',
                         'width': 'label',
                         'height': 'label'
@@ -80,9 +81,7 @@ export function renderGraph(state) {
                         'border-width': function(ele) {
                             return isProcessDeadlocked(ele) ? 3 : 1;
                         },
-                        'border-color': function(ele) {
-                            return isProcessDeadlocked(ele) ? '#8b2e2e' : '#000000';
-                        },
+                        'border-color': '#000000',
                         'label': function(ele) {
                             const id = ele.data('id');
                             if (isProcessDeadlocked(ele)) {
@@ -145,9 +144,9 @@ export function renderGraph(state) {
                 {
                     selector: 'edge[?inCycle]',
                     style: {
-                        'line-color': '#8b2e2e',
+                        'line-color': '#444444',
                         'width': 3,
-                        'target-arrow-color': '#8b2e2e'
+                        'target-arrow-color': '#444444'
                     }
                 }
             ]
@@ -171,7 +170,6 @@ export function renderGraph(state) {
 
     cy.elements().remove();
 
-    const actualState = (state && state.state) ? state.state : state;
     currentProcesses = actualState && Array.isArray(actualState.processes) ? actualState.processes : [];
 
     const graph = actualState && actualState.graph;
@@ -182,18 +180,35 @@ export function renderGraph(state) {
         return;
     }
 
-    cy.add([...nodes, ...edges]);
-
-    const layout = cy.layout({
-        name: 'dagre',
-        rankDir: 'LR',
-        padding: 30
-    });
-    layout.on('layoutstop', () => {
-        cy.resize();
-        cy.fit(undefined, 30);
-    });
-    layout.run();
+    const elements = cy.add([...nodes, ...edges]);
     cy.resize();
+    const isolated = elements.nodes().filter(node => node.degree() === 0);
+    const connected = elements.not(isolated);
+    if (connected.length > 0) {
+        connected.layout({ name: 'dagre', rankDir: 'LR', rankSep: 36, nodeSep: 20, fit: false }).run();
+    }
+    if (isolated.length > 0) {
+        const cellWidth = isolated.reduce((width, node) => Math.max(width, node.outerWidth()), 0) + 20;
+        const cellHeight = isolated.reduce((height, node) => Math.max(height, node.outerHeight()), 0) + 20;
+        const aspect = Math.max(cy.width(), 1) / Math.max(cy.height(), 1);
+        const columns = Math.round(Math.sqrt(isolated.length * aspect * cellHeight / cellWidth));
+        const cols = Math.max(1, Math.min(isolated.length, columns));
+        const rows = Math.ceil(isolated.length / cols);
+        const width = cols * cellWidth;
+        const bounds = connected.length > 0 ? connected.boundingBox() : null;
+        isolated.layout({
+            name: 'grid',
+            cols,
+            rows,
+            boundingBox: {
+                x1: bounds ? (bounds.x1 + bounds.x2 - width) / 2 : 0,
+                y1: bounds ? bounds.y2 + 12 : 0,
+                w: width,
+                h: rows * cellHeight
+            },
+            avoidOverlap: false,
+            fit: false
+        }).run();
+    }
     cy.fit(undefined, 30);
 }

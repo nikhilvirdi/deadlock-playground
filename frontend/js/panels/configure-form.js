@@ -6,24 +6,58 @@ export function renderConfigureForm(container, onConfigured) {
         return;
     }
 
-    const target = container.querySelector('.panel-content') || container;
-    target.textContent = '';
+    container.querySelector('#form-configure')?.remove();
 
     const form = document.createElement('form');
     form.id = 'form-configure';
 
+    const fields = document.createElement('div');
+    fields.className = 'panel-content';
+    fields.tabIndex = 0;
+    fields.setAttribute('role', 'region');
+    fields.setAttribute('aria-label', 'Scenario fields');
+    form.appendChild(fields);
+
+    const fieldError = document.createElement('div');
+    fieldError.id = 'cfg-field-error';
+    fieldError.className = 'error-line';
+    fieldError.setAttribute('role', 'alert');
+    let invalidField = null;
+
+    function clearFieldError() {
+        invalidField?.removeAttribute('aria-invalid');
+        invalidField?.removeAttribute('aria-describedby');
+        fieldError.textContent = '';
+        invalidField = null;
+    }
+
+    function appendRemoveButton(row, entryType, addButton) {
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'remove-entry';
+        removeButton.textContent = 'Remove';
+        removeButton.setAttribute('aria-label', `Remove ${entryType}`);
+        removeButton.addEventListener('click', () => {
+            const adjacentRow = row.nextElementSibling || row.previousElementSibling;
+            if (row.contains(invalidField)) clearFieldError();
+            row.remove();
+            (adjacentRow?.querySelector('input') || addButton).focus();
+        });
+        row.appendChild(removeButton);
+    }
+
     // Scenario Name
     const nameGroup = document.createElement('div');
-    nameGroup.className = 'form-group';
+    nameGroup.className = 'form-group scenario-name';
     const nameLabel = document.createElement('label');
-    nameLabel.textContent = 'Scenario Name: ';
+    nameLabel.textContent = 'Scenario Name';
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.id = 'cfg-name';
     nameInput.placeholder = 'Scenario Name';
     nameLabel.appendChild(nameInput);
     nameGroup.appendChild(nameLabel);
-    form.appendChild(nameGroup);
+    fields.appendChild(nameGroup);
 
     // Resources
     const resGroup = document.createElement('div');
@@ -41,7 +75,7 @@ export function renderConfigureForm(container, onConfigured) {
         row.className = 'resource-row';
 
         const idLabel = document.createElement('label');
-        idLabel.textContent = 'ID: ';
+        idLabel.textContent = 'Resource ID';
         const idInput = document.createElement('input');
         idInput.type = 'text';
         idInput.className = 'cfg-res-id';
@@ -53,7 +87,7 @@ export function renderConfigureForm(container, onConfigured) {
         row.appendChild(idLabel);
 
         const totalLabel = document.createElement('label');
-        totalLabel.textContent = ' Total: ';
+        totalLabel.textContent = 'Total instances';
         const totalInput = document.createElement('input');
         totalInput.type = 'number';
         totalInput.min = '1';
@@ -66,27 +100,30 @@ export function renderConfigureForm(container, onConfigured) {
         row.appendChild(totalLabel);
 
         const shareLabel = document.createElement('label');
-        shareLabel.textContent = ' Shareable: ';
+        shareLabel.className = 'checkbox-label';
+        shareLabel.textContent = 'Shareable';
         const shareInput = document.createElement('input');
         shareInput.type = 'checkbox';
         shareInput.className = 'cfg-res-shareable';
         shareInput.checked = Boolean(defaultShareable);
-        shareLabel.appendChild(shareInput);
+        shareLabel.prepend(shareInput);
         row.appendChild(shareLabel);
 
+        appendRemoveButton(row, 'resource', addResBtn);
         resList.appendChild(row);
+        return idInput;
     }
-
-    addResourceRow();
 
     const addResBtn = document.createElement('button');
     addResBtn.type = 'button';
     addResBtn.textContent = 'Add resource';
     addResBtn.addEventListener('click', () => {
-        addResourceRow();
+        if (invalidField === addResBtn) clearFieldError();
+        addResourceRow().focus();
     });
     resGroup.appendChild(addResBtn);
-    form.appendChild(resGroup);
+    addResourceRow();
+    fields.appendChild(resGroup);
 
     // Processes
     const procGroup = document.createElement('div');
@@ -104,7 +141,7 @@ export function renderConfigureForm(container, onConfigured) {
         row.className = 'process-row';
 
         const idLabel = document.createElement('label');
-        idLabel.textContent = 'ID: ';
+        idLabel.textContent = 'Process ID';
         const idInput = document.createElement('input');
         idInput.type = 'text';
         idInput.className = 'cfg-proc-id';
@@ -116,7 +153,7 @@ export function renderConfigureForm(container, onConfigured) {
         row.appendChild(idLabel);
 
         const prioLabel = document.createElement('label');
-        prioLabel.textContent = ' Priority: ';
+        prioLabel.textContent = 'Priority';
         const prioInput = document.createElement('input');
         prioInput.type = 'number';
         prioInput.className = 'cfg-proc-priority';
@@ -127,33 +164,37 @@ export function renderConfigureForm(container, onConfigured) {
         prioLabel.appendChild(prioInput);
         row.appendChild(prioLabel);
 
+        appendRemoveButton(row, 'process', addProcBtn);
         procList.appendChild(row);
+        return idInput;
     }
-
-    addProcessRow();
 
     const addProcBtn = document.createElement('button');
     addProcBtn.type = 'button';
     addProcBtn.textContent = 'Add process';
     addProcBtn.addEventListener('click', () => {
-        addProcessRow();
+        if (invalidField === addProcBtn) clearFieldError();
+        addProcessRow().focus();
     });
     procGroup.appendChild(addProcBtn);
-    form.appendChild(procGroup);
+    addProcessRow();
+    fields.appendChild(procGroup);
 
     // Operations
     const opsGroup = document.createElement('div');
     opsGroup.className = 'form-group';
     const opsHeading = document.createElement('h3');
+    opsHeading.id = 'cfg-operations-heading';
     opsHeading.textContent = 'Operations';
     opsGroup.appendChild(opsHeading);
 
     const opsTextarea = document.createElement('textarea');
     opsTextarea.id = 'cfg-operations';
-    opsTextarea.rows = 5;
+    opsTextarea.setAttribute('aria-labelledby', opsHeading.id);
+    opsTextarea.rows = 4;
     opsTextarea.placeholder = 'P1 REQUEST R1 1\nP1 RELEASE R1 1';
     opsGroup.appendChild(opsTextarea);
-    form.appendChild(opsGroup);
+    fields.appendChild(opsGroup);
 
     // Prevention toggles
     const prevGroup = document.createElement('div');
@@ -181,34 +222,31 @@ export function renderConfigureForm(container, onConfigured) {
         label.appendChild(text);
         prevGroup.appendChild(label);
     }
-    form.appendChild(prevGroup);
+    fields.appendChild(prevGroup);
 
-    // Submit button & error line
-    const actionGroup = document.createElement('div');
-    actionGroup.className = 'form-group';
     const submitBtn = document.createElement('button');
     submitBtn.type = 'submit';
     submitBtn.id = 'btn-submit-configure';
     submitBtn.textContent = 'Configure';
-    actionGroup.appendChild(submitBtn);
+    form.appendChild(submitBtn);
 
     const errorLine = document.createElement('div');
     errorLine.id = 'cfg-error-line';
     errorLine.className = 'error-line';
-    actionGroup.appendChild(errorLine);
-    form.appendChild(actionGroup);
+    errorLine.setAttribute('role', 'alert');
+    fields.appendChild(errorLine);
 
     function parseForm() {
         const name = nameInput.value.trim();
         if (!name) {
-            return { error: 'Scenario name must not be blank.' };
+            return { field: nameInput, error: 'Scenario name must not be blank.' };
         }
 
         const resources = [];
         const resourceIds = new Set();
         const resRows = resList.querySelectorAll('.resource-row');
         if (resRows.length === 0) {
-            return { error: 'At least one resource is required.' };
+            return { field: addResBtn, error: 'At least one resource is required.' };
         }
         for (let i = 0; i < resRows.length; i++) {
             const row = resRows[i];
@@ -218,16 +256,16 @@ export function renderConfigureForm(container, onConfigured) {
 
             const id = idInput ? idInput.value.trim() : '';
             if (!id) {
-                return { error: 'Resource row ' + (i + 1) + ': ID must not be blank.' };
+                return { field: idInput, error: 'Resource row ' + (i + 1) + ': ID must not be blank.' };
             }
             if (resourceIds.has(id)) {
-                return { error: 'Resource ID must be unique: ' + id };
+                return { field: idInput, error: 'Resource ID must be unique: ' + id };
             }
             resourceIds.add(id);
 
             const total = totalInput ? parseInt(totalInput.value, 10) : 1;
             if (isNaN(total) || total < 1) {
-                return { error: 'Resource ' + id + ': total must be a whole number of at least 1.' };
+                return { field: totalInput, error: 'Resource ' + id + ': total must be a whole number of at least 1.' };
             }
 
             resources.push({
@@ -241,7 +279,7 @@ export function renderConfigureForm(container, onConfigured) {
         const processIds = new Set();
         const procRows = procList.querySelectorAll('.process-row');
         if (procRows.length === 0) {
-            return { error: 'At least one process is required.' };
+            return { field: addProcBtn, error: 'At least one process is required.' };
         }
         for (let i = 0; i < procRows.length; i++) {
             const row = procRows[i];
@@ -250,16 +288,16 @@ export function renderConfigureForm(container, onConfigured) {
 
             const id = idInput ? idInput.value.trim() : '';
             if (!id) {
-                return { error: 'Process row ' + (i + 1) + ': ID must not be blank.' };
+                return { field: idInput, error: 'Process row ' + (i + 1) + ': ID must not be blank.' };
             }
             if (processIds.has(id)) {
-                return { error: 'Process ID must be unique: ' + id };
+                return { field: idInput, error: 'Process ID must be unique: ' + id };
             }
             processIds.add(id);
 
             const priority = prioInput && prioInput.value.trim() !== '' ? parseInt(prioInput.value, 10) : 1;
             if (isNaN(priority)) {
-                return { error: 'Process ' + id + ': priority must be a valid number.' };
+                return { field: prioInput, error: 'Process ' + id + ': priority must be a valid number.' };
             }
 
             processes.push({
@@ -279,22 +317,22 @@ export function renderConfigureForm(container, onConfigured) {
             }
             const words = line.split(/\s+/);
             if (words.length !== 4) {
-                return { error: 'Operation line ' + lineIndex + ': must have exactly four words.' };
+                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': must have exactly four words.' };
             }
             const [procId, opTypeRaw, resId, countStr] = words;
             if (!processIds.has(procId)) {
-                return { error: 'Operation line ' + lineIndex + ': process ' + procId + ' does not exist.' };
+                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': process ' + procId + ' does not exist.' };
             }
             const opType = opTypeRaw.toUpperCase();
             if (opType !== 'REQUEST' && opType !== 'RELEASE') {
-                return { error: 'Operation line ' + lineIndex + ': type must be REQUEST or RELEASE.' };
+                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': type must be REQUEST or RELEASE.' };
             }
             if (!resourceIds.has(resId)) {
-                return { error: 'Operation line ' + lineIndex + ': resource ' + resId + ' does not exist.' };
+                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': resource ' + resId + ' does not exist.' };
             }
             const count = Number(countStr);
             if (!Number.isInteger(count) || count < 1) {
-                return { error: 'Operation line ' + lineIndex + ': count must be a whole number of at least 1.' };
+                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': count must be a whole number of at least 1.' };
             }
 
             const proc = processes.find(p => p.id === procId);
@@ -324,12 +362,28 @@ export function renderConfigureForm(container, onConfigured) {
         };
     }
 
+    form.addEventListener('input', (e) => {
+        if (e.target === invalidField) clearFieldError();
+    });
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearError('cfg-error-line');
+        clearFieldError();
         const parsed = parseForm();
         if (parsed.error) {
-            showError('cfg-error-line', { code: 'VALIDATION_ERROR', message: parsed.error });
+            invalidField = parsed.field;
+            const label = invalidField.closest('label');
+            if (label) {
+                label.parentElement.appendChild(fieldError);
+            } else {
+                invalidField.after(fieldError);
+            }
+            fieldError.textContent = parsed.error;
+            invalidField.setAttribute('aria-describedby', fieldError.id);
+            if (invalidField.type !== 'button') invalidField.setAttribute('aria-invalid', 'true');
+            invalidField.focus();
+            fieldError.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             return;
         }
 
@@ -341,10 +395,11 @@ export function renderConfigureForm(container, onConfigured) {
             }
         } catch (err) {
             showError('cfg-error-line', err);
+            errorLine.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         }
     });
 
-    target.appendChild(form);
+    container.appendChild(form);
 }
 
 export function syncPreventionToggles(state) {

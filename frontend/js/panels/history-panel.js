@@ -4,9 +4,11 @@ export function renderHistoryPanel(events, currentSeq, onJump) {
         return;
     }
 
-    const container = panel.querySelector('.panel-content') || panel;
-    container.textContent = '';
-
+    const table = panel.querySelector('table');
+    const body = table.tBodies[0];
+    const focusedStep = body.contains(document.activeElement)
+        ? document.activeElement.closest('tr').dataset.seq
+        : null;
     let eventList = [];
     if (Array.isArray(events)) {
         eventList = events;
@@ -14,56 +16,62 @@ export function renderHistoryPanel(events, currentSeq, onJump) {
         eventList = events.events;
     }
 
-    if (eventList.length === 0) {
-        const emptyMsg = document.createElement('p');
-        emptyMsg.className = 'placeholder-text';
-        emptyMsg.textContent = 'No events recorded yet.';
-        container.appendChild(emptyMsg);
-        return;
-    }
+    table.hidden = eventList.length === 0;
+    panel.querySelector('#history-empty').hidden = !table.hidden;
 
-    for (const ev of eventList) {
-        const row = document.createElement('div');
-        row.className = 'history-row';
+    const rows = document.createDocumentFragment();
+    let currentRow;
+    let position = '';
+    let focusTarget;
+    for (const [index, ev] of eventList.entries()) {
+        const row = document.createElement('tr');
+        rows.appendChild(row);
         row.dataset.seq = String(ev.seq);
-        row.setAttribute('tabindex', '0');
-        row.setAttribute('role', 'button');
-
-        if (currentSeq !== undefined && currentSeq !== null && ev.seq === currentSeq) {
-            row.classList.add('current-event');
+        const stepCell = row.insertCell();
+        const typeCell = row.insertCell();
+        typeCell.className = 'history-type';
+        const words = (ev.type || '').split('_');
+        for (const [wordIndex, word] of words.entries()) {
+            if (wordIndex > 0) typeCell.append('_', document.createElement('wbr'));
+            typeCell.appendChild(document.createTextNode(word));
         }
+        row.insertCell().textContent = ev.description || '';
 
-        const seqSpan = document.createElement('span');
-        seqSpan.className = 'history-seq';
-        seqSpan.textContent = String(ev.seq);
-
-        const typeSpan = document.createElement('span');
-        typeSpan.className = 'history-type';
-        typeSpan.textContent = ev.type || '';
-
-        const descSpan = document.createElement('span');
-        descSpan.className = 'history-desc';
-        descSpan.textContent = ev.description || '';
-
-        row.appendChild(seqSpan);
-        row.appendChild(document.createTextNode(' '));
-        row.appendChild(typeSpan);
-        row.appendChild(document.createTextNode(': '));
-        row.appendChild(descSpan);
+        const isCurrent = ev.seq === currentSeq;
+        if (isCurrent) {
+            row.classList.add('current-event');
+            currentRow = row;
+            position = `${index + 1} of ${eventList.length}`;
+        }
 
         if (typeof onJump === 'function') {
-            row.style.cursor = 'pointer';
-            row.addEventListener('click', () => {
-                onJump(ev.seq);
-            });
-            row.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onJump(ev.seq);
-                }
-            });
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = String(ev.seq);
+            button.setAttribute('aria-label', `Go to step ${ev.seq}`);
+            if (isCurrent) button.setAttribute('aria-current', 'step');
+            if (row.dataset.seq === focusedStep) focusTarget = button;
+            stepCell.appendChild(button);
+            row.classList.add('history-selectable');
+            row.addEventListener('click', () => onJump(ev.seq));
+        } else {
+            stepCell.textContent = String(ev.seq);
         }
+    }
 
-        container.appendChild(row);
+    body.replaceChildren(rows);
+    const indicator = document.getElementById('history-position');
+    if (indicator.textContent !== position) indicator.textContent = position;
+    focusTarget?.focus({ preventScroll: true });
+
+    if (currentRow && panel.scrollHeight > panel.clientHeight) {
+        const header = table.tHead.rows[0].cells[0].getBoundingClientRect();
+        const bounds = currentRow.getBoundingClientRect();
+        const bottom = panel.getBoundingClientRect().top + panel.clientHeight;
+        if (bounds.top < header.bottom || bounds.height > bottom - header.bottom) {
+            panel.scrollTop += bounds.top - header.bottom;
+        } else if (bounds.bottom > bottom) {
+            panel.scrollTop += bounds.bottom - bottom;
+        }
     }
 }

@@ -18,42 +18,37 @@ export function renderProcessPanel(state) {
     }
 
     for (const process of processes) {
-        const item = document.createElement('div');
-
-        const line1 = document.createElement('div');
-        const info = document.createElement('span');
-        info.textContent = `${process.id} (Priority: ${process.priority}, State: ${process.state})`;
-        line1.appendChild(info);
+        const item = document.createElement('section');
+        item.className = 'state-entry';
+        const heading = document.createElement('h3');
+        heading.textContent = process.id;
+        item.appendChild(heading);
 
         if (process.deadlocked) {
-            const space = document.createTextNode(' ');
-            line1.appendChild(space);
             const badge = document.createElement('span');
             badge.className = 'deadlocked';
-            badge.textContent = 'DEADLOCKED';
-            line1.appendChild(badge);
-        }
-        item.appendChild(line1);
-
-        const heldDiv = document.createElement('div');
-        if (process.held && process.held.length > 0) {
-            const heldEntries = process.held.map(h => `${h.resource} x ${h.count}`).join(', ');
-            heldDiv.textContent = `Held: ${heldEntries}`;
-        } else {
-            heldDiv.textContent = 'Held: none';
-        }
-        item.appendChild(heldDiv);
-
-        if (process.waitingFor) {
-            const waitingDiv = document.createElement('div');
-            waitingDiv.textContent = `waiting for ${process.waitingFor.resource} x ${process.waitingFor.count}`;
-            item.appendChild(waitingDiv);
+            badge.textContent = 'Deadlocked';
+            heading.appendChild(badge);
         }
 
-        const pendingDiv = document.createElement('div');
-        pendingDiv.textContent = `Pending operations: ${process.pendingOperations}`;
-        item.appendChild(pendingDiv);
-
+        const held = process.held?.map(h => `${h.resource} × ${h.count}`).join(', ');
+        const waiting = process.waitingFor;
+        const details = document.createElement('dl');
+        const fields = [
+            ['Priority', process.priority],
+            ['State', process.state],
+            ['Held', held || 'None'],
+            ['Waiting for', waiting ? `${waiting.resource} × ${waiting.count}` : 'None'],
+            ['Pending ops', process.pendingOperations]
+        ];
+        for (const [label, value] of fields) {
+            const term = document.createElement('dt');
+            term.textContent = label;
+            const detail = document.createElement('dd');
+            detail.textContent = value;
+            details.append(term, detail);
+        }
+        item.appendChild(details);
         container.appendChild(item);
     }
 }

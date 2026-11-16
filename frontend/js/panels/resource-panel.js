@@ -18,9 +18,25 @@ export function renderResourcePanel(state) {
     }
 
     for (const resource of resources) {
-        const item = document.createElement('div');
-        const shareableStr = resource.shareable ? 'yes' : 'no';
-        item.textContent = `${resource.id} (Total: ${resource.total}, Available: ${resource.available}, Shareable: ${shareableStr})`;
+        const item = document.createElement('section');
+        item.className = 'state-entry';
+        const heading = document.createElement('h3');
+        heading.textContent = resource.id;
+
+        const details = document.createElement('dl');
+        const fields = [
+            ['Total instances', resource.total],
+            ['Available', resource.available],
+            ['Shareable', resource.shareable ? 'Yes' : 'No']
+        ];
+        for (const [label, value] of fields) {
+            const term = document.createElement('dt');
+            term.textContent = label;
+            const detail = document.createElement('dd');
+            detail.textContent = value;
+            details.append(term, detail);
+        }
+        item.append(heading, details);
         container.appendChild(item);
     }
 }

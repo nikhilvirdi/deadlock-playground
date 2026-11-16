@@ -21,10 +21,6 @@ function createDetectSection(container) {
     const group = document.createElement('div');
     group.className = 'form-group detect-group';
 
-    const heading = document.createElement('h3');
-    heading.textContent = 'Deadlock Detection';
-    group.appendChild(heading);
-
     const btnRow = document.createElement('div');
     btnRow.className = 'action-buttons-row';
 
@@ -84,7 +80,7 @@ function createRecoverSection(container) {
     controlsRow.className = 'action-inputs-row';
 
     const policyLabel = document.createElement('label');
-    policyLabel.textContent = 'Policy: ';
+    policyLabel.textContent = 'Policy';
     policySelect = document.createElement('select');
     policySelect.id = 'recover-policy-select';
 
@@ -104,7 +100,7 @@ function createRecoverSection(container) {
     controlsRow.appendChild(policyLabel);
 
     const strategyLabel = document.createElement('label');
-    strategyLabel.textContent = ' Strategy: ';
+    strategyLabel.textContent = 'Strategy';
     strategySelect = document.createElement('select');
     strategySelect.id = 'recover-strategy-select';
 
@@ -172,10 +168,6 @@ function createRecoverSection(container) {
 function createResetSection(container) {
     const group = document.createElement('div');
     group.className = 'form-group reset-group';
-
-    const heading = document.createElement('h3');
-    heading.textContent = 'Reset';
-    group.appendChild(heading);
 
     const btnRow = document.createElement('div');
     btnRow.className = 'action-buttons-row';
