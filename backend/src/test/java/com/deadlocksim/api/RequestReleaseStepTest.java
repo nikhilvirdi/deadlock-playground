@@ -1,10 +1,6 @@
 package com.deadlocksim.api;
 
 import com.deadlocksim.engine.SimulationEngine;
-import com.deadlocksim.model.Process;
-import com.deadlocksim.model.ProcessState;
-import com.deadlocksim.model.Resource;
-import com.deadlocksim.model.Scenario;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
