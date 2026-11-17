@@ -128,7 +128,6 @@ public class ApiServer {
             try {
                 exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
                 String path = exchange.getRequestURI().getPath();
-                String method = exchange.getRequestMethod();
                 if (!path.startsWith("/api/")) {
                     if (requireMethod(exchange, "GET")) serveStatic(exchange, path);
                     return;
