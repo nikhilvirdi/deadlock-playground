@@ -1,36 +1,158 @@
 ﻿@startuml
+title Deadlock Playground - Deadlock Recovery Sequence
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam shadowing false
 skinparam sequenceMessageAlign center
+skinparam sequenceParticipant underline
+skinparam sequence {
+  ArrowColor #444444
+  LifeLineBorderColor #777777
+  ParticipantBorderColor #444444
+  ParticipantBackgroundColor #F7F7F7
+  ActorBorderColor #444444
+  ActorBackgroundColor #FFFFFF
+  GroupBorderColor #777777
+  GroupBackgroundColor #FAFAFA
+}
+
+hide footbox
+autonumber
 
 actor User
-participant "SimulationEngine" as E
-participant "DetectionStrategy" as D
-participant "VictimPolicy" as V
-participant "RecoveryStrategy" as X
-participant "Process" as P
-participant "Resource" as R
-participant "History" as H
+participant "Browser\nAPI Client" as Client
+participant "ApiServer" as API
+participant "SessionStore" as Store
+participant "SimulationEngine" as Engine
+participant "DetectionStrategy" as Detector
+participant "VictimPolicy" as Policy
+participant "RecoveryStrategy" as Strategy
+participant "Process / Resource\nDomain State" as Domain
+participant "History" as History
 
-User -> E : recover(policy, strategy)
-E -> D : detect(graph)
-D --> E : DetectionResult
-E -> H : add(DETECT)
+User -> Client : Select policy and recovery strategy
+User -> Client : Click Recover
 
-loop until deadlock resolved
-  E -> V : selectVictim(deadlocked)
-  V --> E : victim
-  E -> H : add(VICTIM_SELECTED)
-  E -> X : apply(victim)
-  X -> P : release all held (Terminate)
-  X -> R : release(n)
-  X -> H : add(TERMINATE or PREEMPT)
-  E -> D : detect(graph)
-  D --> E : DetectionResult
-  alt still deadlocked
-    note right of E : repeat with next victim
-  else resolved
-    E -> P : setState(Running) for unblocked
-    E -> H : add(RESOLVED)
-    E --> User : deadlock resolved
+Client -> API : POST /api/recover\n{policy, strategy}
+
+API -> Store : Resolve browser session
+Store --> API : Session-specific engine
+
+API -> Engine : Execute recovery command
+
+note over Engine
+  Recovery operates only on the
+  current browser session.
+
+  The selected victim policy and
+  recovery strategy are independent
+  of prevention settings.
+end note
+
+Engine -> Detector : Detect current deadlock
+Detector --> Engine : Detection result
+
+alt No deadlock exists
+
+  Engine --> API : NO_DEADLOCK error
+  note over Engine,History
+    No recovery transition is committed.
+    Existing state and history remain intact.
+  end note
+
+else Deadlock detected
+
+  loop While deadlock remains and an eligible intervention exists
+
+    Engine -> Engine : Identify contended resource holders\non blocking deadlock relationships
+
+    Engine -> Policy : Select victim from eligible processes
+    Policy --> Engine : Selected victim
+
+    Engine -> History : Stage VICTIM_SELECTED\nwith pre-intervention snapshot
+
+    alt Strategy = TERMINATE
+
+      Engine -> Strategy : Apply termination to victim
+
+      Strategy -> Domain : Set victim state to TERMINATED
+      Strategy -> Domain : Release all victim holdings
+      Domain --> Strategy : Updated allocations
+
+      Strategy --> Engine : Termination result
+
+      Engine -> History : Stage TERMINATE event
+
+    else Strategy = PREEMPT
+
+      Engine -> Strategy : Apply preemption to victim
+
+      Strategy -> Domain : Select contended exclusive resource
+      Strategy -> Domain : Release victim holdings
+      Strategy -> Domain : Roll back script execution\nand reset instruction progress
+      Domain --> Strategy : Victim restored to RUNNING
+
+      Strategy --> Engine : Preemption result
+
+      Engine -> History : Stage PREEMPT and ROLLBACK events
+
+    end
+
+    Engine -> Domain : Reconsider pending resource requests
+    Domain -> Domain : Grant eligible requests\nand update process states
+    Domain --> Engine : Updated simulation state
+
+    Engine -> Detector : Detect deadlock again
+    Detector --> Engine : Updated detection result
+
+    Engine -> History : Stage recovery-round events\nwith coherent resulting snapshots
+
   end
+
+  alt Deadlock resolved
+
+    Engine -> History : Stage RESOLVED event
+    Engine -> History : Commit recovery history
+
+    Engine --> API : Recovery result\nresolved = true
+
+  else Deadlock remains after one or more rounds
+
+    Engine -> History : Commit completed recovery rounds
+
+    Engine --> API : Recovery result\nresolved = false
+
+  else No eligible intervention was possible
+
+    note over Engine,History
+      No recovery round was committed.
+      Preserve original state and history.
+    end note
+
+    Engine --> API : Recovery result\nrounds = [], resolved = false
+
+  end
+
 end
+
+API --> Client : JSON response with result\nand current session state
+
+Client -> Client : Refresh graph, processes,\nresources and event history
+
+Client --> User : Display recovery outcome
+
+note over Engine,History
+  Victim-selection events represent the
+  state before the intervention.
+
+  Events completing a recovery round
+  represent the state after resource
+  release, wake-ups and redetection.
+
+  An exception must not leave
+  partially committed history.
+end note
+
 @enduml

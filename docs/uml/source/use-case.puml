@@ -1,29 +1,195 @@
 ﻿@startuml
+title Deadlock Playground - Use Case Diagram
+
 left to right direction
 
-actor User
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam roundcorner 0
+skinparam ArrowColor #444444
 
-rectangle "Deadlock Visualisation and Recovery Simulator" {
-  usecase "UC1: Configure scenario" as UC1
-  usecase "UC2: Request resource" as UC2
-  usecase "UC3: Release resource" as UC3
-  usecase "UC4: Step through simulation" as UC4
-  usecase "UC5: Detect deadlock" as UC5
-  usecase "UC6: Recover from deadlock" as UC6
-  usecase "UC7: Reset scenario" as UC7
-  usecase "Check safe state" as SAFE
-  usecase "Preempt resource" as PRE
+skinparam actor {
+  BorderColor #444444
+  BackgroundColor #FFFFFF
+  FontColor #222222
 }
 
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #444444
+  FontColor #222222
+  ArrowColor #444444
+}
+
+actor "User\n(Student / Instructor)" as User
+
+rectangle "Deadlock Visualisation and Recovery Simulator" {
+
+  usecase "UC1: Configure\nScenario" as UC1
+
+  usecase "UC2: Request\nResource" as UC2
+
+  usecase "UC3: Release\nResource" as UC3
+
+  usecase "UC4: Step Through\nSimulation" as UC4
+
+  usecase "UC5: Detect\nDeadlock" as UC5
+
+  usecase "UC6: Recover\nfrom Deadlock" as UC6
+
+  usecase "UC7: Reset\nScenario" as UC7
+
+  usecase "Preempt Resource\n(Recovery Option)" as PRE
+
+  ' Encourage a logical vertical arrangement
+
+  UC1 -[hidden]down-> UC2
+  UC2 -[hidden]down-> UC3
+  UC3 -[hidden]down-> UC4
+  UC4 -[hidden]down-> UC5
+  UC5 -[hidden]down-> UC6
+  UC6 -[hidden]down-> UC7
+}
+
+' --------------------------------
+' Actor associations
+' --------------------------------
+
 User --> UC1
+
 User --> UC2
+
 User --> UC3
+
 User --> UC4
+
 User --> UC5
+
 User --> UC6
+
 User --> UC7
 
-UC2 ..> SAFE : <<include>>
+' --------------------------------
+' Use case relationships
+' --------------------------------
+
 UC6 ..> UC5 : <<include>>
+
 PRE ..> UC6 : <<extend>>
+
+' --------------------------------
+' Use case notes
+' --------------------------------
+
+note right of UC1
+  Configure processes, priorities,
+  resources, instance counts,
+  shareability and operations.
+
+  Select prevention settings and
+  optional Banker's avoidance.
+
+  Textbook presets are not
+  implemented.
+end note
+
+note right of UC2
+  Requests can be granted,
+  blocked, denied as unsafe,
+  or rejected by prevention.
+
+  Banker's safety checking applies
+  only when avoidance is enabled.
+
+  Demo mode permits unsafe grants.
+end note
+
+note right of UC4
+  Step executes scheduled operations.
+
+  Hold and Wait prevention may
+  require atomic request groups.
+
+  Event History separately supports
+  backward and forward navigation.
+end note
+
+note right of UC5
+  Single-instance configurations
+  use cycle detection.
+
+  Multi-instance configurations
+  use Banker's-style detection.
+
+  A structural cycle does not
+  always prove deadlock.
+end note
+
+note right of UC6
+  Recovery uses one of three
+  victim-selection policies:
+
+  Priority
+  Resources Held
+  Recovery Cost
+
+  Terminate and Preempt are
+  alternative recovery strategies.
+
+  Multiple rounds may be needed.
+  Recovery may remain unresolved.
+end note
+
+note right of UC7
+  Reset clears the current
+  browser session's scenario.
+
+  Processes, resources, graph
+  and event history return
+  to their unconfigured state.
+
+  Other sessions are unaffected.
+end note
+
+note bottom of PRE
+  Extension condition:
+  The user selects PREEMPT
+  as the recovery strategy.
+
+  Termination is the other
+  supported recovery strategy.
+end note
+
+legend bottom
+  USE CASE RELATIONSHIPS
+
+  User associations:
+  The student or instructor can invoke
+  the seven primary use cases.
+
+  <<include>>:
+  Recovery uses deadlock detection
+  internally. The user does not need
+  to invoke Detect separately.
+
+  <<extend>>:
+  Preemption is an optional recovery
+  behavior selected by the user.
+
+  Banker's avoidance:
+  Conditional behavior within resource
+  requests and scheduled execution,
+  not an unconditional included use case.
+
+  Event-history navigation:
+  Supporting interaction within the
+  simulation interface.
+
+  Sessions:
+  Each browser session operates on
+  its own temporary simulation state.
+endlegend
+
 @enduml

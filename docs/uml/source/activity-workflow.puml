@@ -1,44 +1,231 @@
 ﻿@startuml
+title Deadlock Playground - Interactive Simulation Workflow
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam shadowing false
+skinparam ArrowColor #444444
+skinparam activity {
+  BackgroundColor #FFFFFF
+  BorderColor #444444
+  FontColor #222222
+  DiamondBackgroundColor #F2F2F2
+  DiamondBorderColor #444444
+  StartColor #333333
+  EndColor #333333
+}
+
 start
-:Configure scenario (UC1);
-:Validate configuration;
-if (Valid?) then (no)
-  :Show error, keep form open;
-  stop
-else (yes)
-endif
-:Load initial snapshot;
+
+:Open Deadlock Playground;
+:Load current browser-session view;
+:Display configured state or empty simulator;
+
 repeat
-  :Step through next operation (UC4);
-  if (Operation is Request?) then (yes)
-    if (Prevention rules satisfied?) then (no)
-      :Reject request with explanation;
-    else (yes)
-      if (Free instance available?) then (no)
-        :Process Waiting;
-      else (yes)
-        :Run safety check (UC2);
-        if (Safe?) then (no)
-          :Deny request, process Waiting;
-        else (yes)
-          :Grant resource;
-        endif
-      endif
+
+  :User selects an action;
+
+  if (Configure scenario?) then (yes)
+
+    :Define processes, priorities,\nresources, instances and operations;
+    :Choose prevention settings\nand optional Banker's avoidance;
+    :Validate configuration;
+
+    if (Configuration valid?) then (yes)
+      :Create or replace scenario\nin current browser session;
+      :Initialize processes, resources,\ngraph and event history;
+    else (no)
+      :Display validation errors;
+      :Preserve existing simulation state;
     endif
-  else (Release)
-    :Release resource (UC3);
-    :Unblock waiting processes;
+
+  elseif (Request, Release or Step?) then (yes)
+
+    if (Scenario configured?) then (yes)
+
+      :Validate selected command;
+
+      if (Command valid?) then (yes)
+
+        if (Executing a request?) then (yes)
+
+          :Resolve manual request or\nscheduled atomic request group;
+          :Apply enabled prevention rules;
+
+          if (Prevention violation?) then (yes)
+
+            :Reject manual request or\nstop invalid scripted execution;
+            :Release holdings if scripted\nprocess is terminated;
+
+          else (no)
+
+            if (Sufficient resource capacity?) then (yes)
+
+              if (Banker's avoidance enabled?) then (yes)
+
+                :Validate declared maximum claim;
+                :Evaluate tentative allocation\nusing Banker's safety algorithm;
+
+                if (Claim valid and state safe?) then (yes)
+                  :Grant requested instances;
+                else (no)
+                  :Reject invalid claim or\nqueue unsafe request to wait;
+                  :Do not grant unsafe allocation;
+                endif
+
+              else (no)
+
+                :Grant requested instances\nwithout avoidance checking;
+
+              endif
+
+            else (no)
+
+              if (Release when blocked applies?) then (yes)
+                :Return current holdings;
+                :Queue required reacquisition\nwith the pending request;
+              else (no)
+                :Retain existing holdings;
+                :Queue pending resource request;
+              endif
+
+              :Set process to WAITING;
+
+            endif
+
+          endif
+
+        else (Release or scheduled release)
+
+          :Release held resource instances;
+          :Reconsider pending requests;
+
+        endif
+
+        :Apply resulting process-state changes;
+        :Wake eligible waiting processes;
+        :Complete finished scripts\nand release remaining holdings;
+        :Commit applicable events and snapshots;
+        :Update graph, processes,\nresources and history panels;
+
+      else (no)
+
+        :Display command error;
+        :Preserve state and history;
+
+      endif
+
+    else (no)
+
+      :Prompt user to configure a scenario;
+
+    endif
+
+  elseif (Detect deadlock?) then (yes)
+
+    if (Scenario configured?) then (yes)
+
+      :Select detection algorithm;
+
+      if (All resource types single-instance?) then (yes)
+        :Run cycle detection;
+      else (no)
+        :Run multi-instance\ndeadlock detection;
+      endif
+
+      :Update confirmed deadlock flags;
+      :Record detection result in history;
+      :Display deadlocked processes\nor no-deadlock result;
+
+    else (no)
+
+      :Prompt user to configure a scenario;
+
+    endif
+
+  elseif (Recover deadlock?) then (yes)
+
+    if (Scenario configured?) then (yes)
+
+      :Choose victim policy and\nTerminate or Preempt strategy;
+      :Detect current deadlock;
+
+      if (Deadlock exists?) then (yes)
+
+        while (Deadlock remains and\neligible victim exists?) is (yes)
+
+          :Select eligible victim\nusing configured policy;
+
+          if (Recovery strategy is Terminate?) then (yes)
+            :Terminate selected victim;
+            :Release all victim holdings;
+          else (Preempt)
+            :Preempt a contended resource;
+            :Roll back victim execution;
+            :Release victim holdings;
+          endif
+
+          :Wake eligible waiting processes;
+          :Re-run deadlock detection;
+          :Commit recovery-round events\nand coherent snapshots;
+
+        endwhile (no)
+
+        if (Deadlock resolved?) then (yes)
+          :Record successful resolution;
+          :Display recovery result;
+        else (no)
+          :Report unresolved deadlock;
+        endif
+
+      else (no)
+
+        :Report that no deadlock\nrequires recovery;
+
+      endif
+
+      :Refresh graph, state and history;
+
+    else (no)
+
+      :Prompt user to configure a scenario;
+
+    endif
+
+  elseif (Navigate event history?) then (yes)
+
+    :Select previous, next or\nspecific recorded event;
+    :Restore corresponding snapshot;
+    :Synchronize graph, process state,\nresources and execution progress;
+
+    note right
+      Navigation preserves future history.
+      A new committed action from an earlier
+      snapshot replaces the obsolete future.
+    end note
+
+  elseif (Reset scenario?) then (yes)
+
+    if (Reset authorized or confirmed?) then (yes)
+
+      :Clear current session scenario;
+      :Clear allocations, process state,\ngraph and event history;
+      :Return to unconfigured UI;
+
+    else (no)
+
+      :Request required confirmation;
+      :Preserve active scenario;
+
+    endif
+
+  else (View current state)
+
+    :Inspect graph, process information,\nresources and event history;
+
   endif
-  :Record history event;
-repeat while (More operations?) is (yes) not (no)
-:Detect deadlock (UC5);
-if (Deadlock found?) then (yes)
-  :Select victim (UC6);
-  :Terminate or Preempt;
-  :Re-run detection;
-  :Record RESOLVED;
-else (no)
-  :Scenario is deadlock-free;
-endif
+
+repeat while (Continue using simulator?) is (yes) not (no)
+
 stop
 @enduml

@@ -1,37 +1,131 @@
 ﻿@startuml
-left to right direction
-skinparam componentStyle rectangle
+title Deadlock Playground - Application Architecture
+
+top to bottom direction
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam shadowing false
 skinparam linetype ortho
+skinparam componentStyle rectangle
+skinparam ArrowColor #444444
+
 skinparam component {
-  BorderColor black
-  BackgroundColor white
+  BackgroundColor #FFFFFF
+  BorderColor #444444
+  FontColor #222222
 }
 
-package "View (Browser)" {
-  [HTML / CSS page] as UI
-  [Panels and controls (JS)] as Panels
-  [Cytoscape.js renderer] as RAG
+skinparam package {
+  BackgroundColor #FAFAFA
+  BorderColor #777777
+  FontColor #222222
 }
 
-package "Controller (Java HTTP)" {
-  [ApiServer\n(com.sun.net.httpserver)] as Api
-  [JSON mapper (Gson)] as Json
+package "Browser - View Layer" {
+
+  component "HTML / CSS\nPanels and Controls" as UI
+
+  component "Application Controller\nVanilla JavaScript ES Modules" as App
+
+  component "API Client\nFetch / JSON" as Client
+
+  component "Resource Allocation Graph\nCytoscape.js + Dagre" as Renderer
+
 }
 
-package "Model (Java domain)" {
-  [SimulationEngine\n(Facade)] as Engine
-  [Pluggable algorithms\nSafetyChecker, DetectionStrategy,\nVictimPolicy, RecoveryStrategy] as Algo
-  [Scenario, Process, Resource] as Domain
-  [History, Snapshot] as Hist
+package "Java HTTP and Session Layer" {
+
+  component "Main\nApplication Entry Point" as Main
+
+  component "ApiServer\nHTTP Routing and Validation" as API
+
+  component "JsonMapper\nGson Serialization" as JSON
+
+  component "SessionStore\nSession Management" as Sessions
+
+  component "Bundled Frontend Assets\nHTML, CSS, JS and Vendor Libraries" as Assets
+
 }
 
-UI --> Panels
-Panels --> RAG
-Panels --> Api : fetch JSON
-Api --> Json
-Api --> Engine : use cases
-Engine --> Algo
-Engine --> Hist
-Engine --> Domain
-Algo --> Domain
+package "Session-Scoped Simulation Domain" {
+
+  component "SimulationEngine\nFacade" as Engine
+
+  component "Domain Model\nScenario, Process, Resource\nResource Allocation Graph" as Domain
+
+  component "History Management\nHistory, HistoryEvent, Snapshot" as History
+
+  component "SafetyChecker\nOptional Banker's Avoidance" as Safety
+
+  component "Detection Strategies\nCycleDetection\nBankersDetection" as Detection
+
+  component "Victim Policies\nPriorityPolicy\nResourcesHeldPolicy\nRecoveryCostPolicy" as Victim
+
+  component "Recovery Strategies\nTerminate\nPreempt" as Recovery
+
+}
+
+UI --> App : user interactions
+
+App --> Client : commands and state requests
+
+App --> Renderer : authoritative graph state
+
+Client --> API : HTTP JSON\nsession cookie
+
+Main --> API : initialize and start
+
+API --> JSON : parse requests\nserialize responses
+
+API --> Sessions : resolve or create\nbrowser session
+
+API --> Assets : serve application files
+
+Sessions --> Engine : provide isolated\nsimulation engine
+
+Engine --> Domain : configure and mutate state
+
+Engine --> History : record and restore snapshots
+
+Engine ..> Safety : check safety when enabled
+
+Engine ..> Detection : detect deadlocks
+
+Engine ..> Victim : select recovery victim
+
+Engine ..> Recovery : execute intervention
+
+Safety ..> Domain : inspect claims and allocations
+
+Detection ..> Domain : inspect requests and holdings
+
+Victim ..> Domain : evaluate eligible processes
+
+Recovery ..> Domain : modify process and resource state
+
+note right of Sessions
+  Independent browser sessions.
+
+  Each active session owns its
+  own simulation engine and history.
+
+  Sessions are temporary and in memory.
+  The store is bounded and expires idle
+  sessions.
+
+  No database or user authentication.
+end note
+
+note bottom of Renderer
+  Cytoscape.js and Dagre are
+  distributed locally under
+  frontend/vendor/.
+end note
+
+note bottom of History
+  Snapshots support event navigation
+  and branching from historical states.
+end note
+
 @enduml

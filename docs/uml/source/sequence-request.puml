@@ -1,37 +1,226 @@
 ﻿@startuml
+title Deadlock Playground - Resource Request Sequence
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam shadowing false
 skinparam sequenceMessageAlign center
+skinparam sequence {
+  ArrowColor #444444
+  LifeLineBorderColor #777777
+  ParticipantBorderColor #444444
+  ParticipantBackgroundColor #F7F7F7
+  ActorBorderColor #444444
+  ActorBackgroundColor #FFFFFF
+  GroupBorderColor #777777
+  GroupBackgroundColor #FAFAFA
+}
+
+hide footbox
+autonumber
 
 actor User
-participant "SimulationEngine" as E
-participant "Process" as P
-participant "Resource" as R
-participant "SafetyChecker" as S
-participant "History" as H
+participant "Browser\nAPI Client" as Client
+participant "ApiServer" as API
+participant "SessionStore" as Store
+participant "SimulationEngine" as Engine
+participant "Process" as Process
+participant "Resource" as Resource
+participant "SafetyChecker" as Safety
+participant "History" as History
 
-User -> E : request(p, r)
-E -> P : checkPreventionRules(r)
-alt rule violated
-  E -> H : add(BLOCK)
-  E --> User : rejected with explanation
-else rule satisfied
-  E -> R : hasFreeInstance()
-  alt no free instance
-    E -> P : setState(Waiting)
-    E -> H : add(BLOCK)
-    E --> User : request edge drawn
-  else instance available
-    E -> S : check(tentative grant)
-    S --> E : SafetyResult
-    alt safe
-      E -> R : grant(1)
-      E -> P : addHeld(r)
-      E -> H : add(GRANT)
-      E --> User : graph updated
-    else unsafe
-      E -> P : setState(Waiting)
-      E -> H : add(AVOIDANCE_CHECK: unsafe)
-      E --> User : denied with unsafe reasoning
-    end
-  end
+alt Manual request
+
+  User -> Client : Select process, resource and count
+  User -> Client : Click Request
+  Client -> API : POST /api/request\n{process, resource, count}
+
+else Scheduled request
+
+  User -> Client : Click Step
+  Client -> API : POST /api/step\n{}
+
+  note over API,Engine
+    This sequence follows the REQUEST
+    operation selected by Step.
+
+    Hold and Wait prevention may require
+    an atomic group of scripted requests.
+  end note
+
 end
+
+API -> Store : Resolve browser session
+Store --> API : Session-specific engine
+
+API -> Engine : Execute resource request
+
+Engine -> Process : Inspect process state,\nholdings and pending operations
+Process --> Engine : Current process information
+
+Engine -> Resource : Inspect resource capacity\nand shareability
+Resource --> Engine : Current resource information
+
+Engine -> Engine : Validate request and active prevention rules
+
+alt Invalid request or declared values
+
+  Engine --> API : Validation error
+
+  note over Engine,History
+    Reject invalid input without
+    changing state or history.
+  end note
+
+else Manual prevention violation
+
+  Engine --> API : Prevention rejection
+
+  note over Engine,History
+    A rejected manual prevention
+    request leaves state and
+    history unchanged.
+  end note
+
+else Scripted prevention violation
+
+  Engine -> Process : Stop invalid script
+  Engine -> Process : Set state to TERMINATED
+  Engine -> Resource : Return process holdings
+
+  Engine -> History : Commit applicable state events\nand restorable snapshot
+
+  Engine --> API : Report scripted violation\nand resulting state
+
+else Request passes validation and prevention
+
+  Engine -> Engine : Determine requested quantity\nor atomic request group
+
+  Engine -> Resource : Check effective available capacity
+
+  note over Engine,Resource
+    When Mutual Exclusion prevention
+    is enabled, resources configured
+    as shareable do not consume
+    exclusive available capacity.
+
+    Other resources use normal
+    instance accounting.
+  end note
+
+  alt Insufficient capacity
+
+    opt Release When Blocked enabled
+
+      Engine -> Process : Identify existing holdings
+      Engine -> Resource : Return held instances
+      Engine -> Process : Preserve demand for atomic reacquisition
+
+    end
+
+    Engine -> Process : Record pending request or group
+    Engine -> Process : Set state to WAITING
+
+    Engine -> Engine : Reconsider eligible waiters\nif holdings were returned
+
+    Engine -> History : Commit applicable BLOCK,\nrelease and state events
+
+    Engine --> API : BLOCKED\nUpdated simulation state
+
+  else Capacity available or effective sharing allowed
+
+    alt Banker's avoidance enabled
+
+      Engine -> Engine : Validate request against\ndeclared maximum claim
+
+      alt Request exceeds declared claim
+
+        Engine --> API : Validation error
+
+        note over Engine,History
+          No allocation or history
+          change is committed.
+        end note
+
+      else Request within declared claim
+
+        Engine -> Safety : Evaluate tentative allocation\nand remaining resource needs
+
+        Safety --> Engine : SafetyResult
+
+        alt Safe state
+
+          Engine -> Resource : Grant requested instances
+          Engine -> Process : Update holdings and execution progress
+
+          Engine -> Engine : Apply completion and\nresulting state changes
+
+          Engine -> History : Commit AVOIDANCE_CHECK,\nGRANT and applicable state events
+
+          Engine --> API : GRANTED\nSafe sequence and updated state
+
+        else Unsafe state
+
+          Engine -> Process : Record pending request
+          Engine -> Process : Set state to WAITING
+
+          note over Engine,Process
+            Tentative grant is not applied.
+            Existing holdings are preserved.
+
+            The pending request can be
+            reconsidered when resources
+            become available.
+          end note
+
+          Engine -> History : Commit unsafe AVOIDANCE_CHECK\nand applicable waiting events
+
+          Engine --> API : DENIED_UNSAFE\nReason and updated state
+
+        end
+
+      end
+
+    else Banker's avoidance disabled
+
+      Engine -> Resource : Grant requested instances
+      Engine -> Process : Update holdings and execution progress
+
+      Engine -> Engine : Apply completion and\nresulting state changes
+
+      Engine -> History : Commit GRANT and\napplicable state events
+
+      Engine --> API : GRANTED\nUpdated simulation state
+
+      note over Engine,History
+        Demo mode does not reject
+        an allocation merely because
+        the resulting state is unsafe.
+      end note
+
+    end
+
+  end
+
+end
+
+API --> Client : JSON response and current state
+
+Client -> Client : Synchronize graph, processes,\nresources and event history
+
+Client --> User : Display request outcome
+
+note over Engine,History
+  Committed events reference coherent
+  snapshots of the resulting state.
+
+  A successful new command from an
+  earlier historical position may
+  replace the obsolete future.
+
+  Rejected commands without committed
+  effects preserve existing history.
+end note
+
 @enduml

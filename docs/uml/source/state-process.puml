@@ -1,27 +1,150 @@
 ﻿@startuml
+title Deadlock Playground - Process State Diagram
+
 top to bottom direction
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam roundcorner 0
+skinparam ArrowColor #444444
+
 skinparam state {
-  BorderColor black
-  BackgroundColor white
+  BackgroundColor #FFFFFF
+  BorderColor #444444
+  FontColor #222222
+  StartColor #333333
+  EndColor #333333
 }
 
-[*] --> Running : process created
+state "RUNNING" as Running
+state "WAITING" as Waiting
+state "COMPLETED" as Completed
+state "TERMINATED" as Terminated
 
-Running --> Waiting : request blocked\n(no free instance or unsafe)
-Waiting --> Running : resource granted\nor rollback (Preempt)
+' --------------------------------
+' Process initialization
+' --------------------------------
 
-Running --> Completed : all operations done
-Running --> Terminated : victim selected\n(Terminate)
-Waiting --> Terminated : victim selected\n(Terminate)
+[*] --> Running : Scenario configured
+
+' --------------------------------
+' Normal execution
+' --------------------------------
+
+Running --> Running : Valid request or release\nwith remaining scripted work
+
+Running --> Waiting : Request cannot be granted\nCapacity shortage or unsafe state
+
+Waiting --> Running : Pending request granted\nMore scripted work remains
+
+' --------------------------------
+' Process completion
+' --------------------------------
+
+Running --> Completed : Final scripted operation succeeds\nRelease remaining holdings
+
+Waiting --> Completed : Final pending scripted request granted\nRelease remaining holdings
+
+' --------------------------------
+' Deadlock recovery
+' --------------------------------
+
+Waiting --> Running : Preemption recovery\nRollback to script beginning
+
+Running --> Running : Preemption recovery\nReset execution progress
+
+Running --> Terminated : Recovery termination
+
+Waiting --> Terminated : Recovery termination
+
+' --------------------------------
+' Scripted prevention violations
+' --------------------------------
+
+Running --> Terminated : Invalid scripted operation\nunder prevention rules
+
+Waiting --> Terminated : Script terminated\nfor a prevention violation
+
+' --------------------------------
+' Terminal states
+' --------------------------------
 
 Completed --> [*]
+
 Terminated --> [*]
 
-note right of Waiting
-  Deadlocked is a flag,
-  not a state. Granting,
-  releasing, and rollback
-  inside Running are shown
-  in the sequence diagrams.
+' --------------------------------
+' Explanatory notes
+' --------------------------------
+
+note right of Running
+  The process can execute eligible
+  manual or scheduled operations.
+
+  A process without a configured
+  script remains available for
+  manual operations.
+
+  Valid operations do not always
+  change the process state.
 end note
+
+note right of Waiting
+  The process has an outstanding
+  resource request.
+
+  Existing holdings are preserved
+  unless an enabled prevention
+  rule requires their release.
+
+  Deadlocked is a separate flag,
+  not an additional process state.
+end note
+
+note right of Completed
+  All scripted work has finished.
+
+  No pending scripted operations
+  or remaining holdings exist.
+end note
+
+note right of Terminated
+  The process cannot continue.
+
+  Its holdings are released.
+
+  Termination may result from
+  recovery or a scripted
+  prevention violation.
+end note
+
+legend bottom
+  PROCESS LIFECYCLE
+
+  RUNNING:
+  Process can perform eligible operations.
+
+  WAITING:
+  Process has an outstanding request.
+
+  COMPLETED:
+  Script finished successfully.
+
+  TERMINATED:
+  Process execution stopped.
+
+  Historical navigation restores a
+  recorded state rather than executing
+  a normal process transition.
+
+  Reset discards the entire scenario.
+  It does not transition processes
+  individually back to RUNNING.
+
+  Manual prevention rejections do not
+  change the existing process state.
+endlegend
+
 @enduml
