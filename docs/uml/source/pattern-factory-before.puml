@@ -1,13 +1,89 @@
 ﻿@startuml
+title Scenario Creation - Current Architecture
+caption Before introducing a Factory Method abstraction
+
+left to right direction
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam roundcorner 0
 skinparam classAttributeIconSize 0
-class SimulationEngine {
-  + configure(source: String): void
-  - buildFromPreset(name: String): Scenario
-  - buildFromForm(json: String): Scenario
+skinparam ArrowColor #444444
+skinparam linetype ortho
+
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #444444
+  FontColor #222222
 }
-note right of SimulationEngine
-  Engine knows how every scenario
-  source is parsed. Adding a source
-  edits the engine.
+
+package "HTTP and Session Layer" {
+
+  class ApiServer <<HTTP Controller>>
+
+  class JsonMapper <<JSON Mapping>>
+
+  class SessionStore <<Session Management>>
+}
+
+package "Simulation Domain" {
+
+  class SimulationEngine <<Facade>>
+
+  class Scenario <<Domain Model>>
+
+  class Process
+
+  class Resource
+}
+
+ApiServer --> JsonMapper : parse configuration data
+
+ApiServer --> SessionStore : resolve browser session
+
+SessionStore --> SimulationEngine : provide session engine
+
+ApiServer ..> SimulationEngine : configure scenario
+
+SimulationEngine --> Scenario : maintain active scenario
+
+Scenario *-- Process : contains
+
+Scenario *-- Resource : contains
+
+note bottom of ApiServer
+  Receives scenario configuration
+  through the HTTP API.
+
+  Validates the request before
+  applying the configuration.
 end note
+
+note bottom of SimulationEngine
+  Coordinates scenario configuration
+  and subsequent simulation actions.
+
+  No interchangeable scenario
+  creation factories are required.
+end note
+
+note bottom of Scenario
+  Contains the configured
+  processes and resource types.
+
+  Configuration includes operations,
+  avoidance and prevention settings.
+end note
+
+legend bottom
+  Current architecture at a conceptual level.
+
+  No dedicated Factory Method hierarchy
+  is represented in the implemented design.
+
+  Exact Java method signatures are omitted.
+endlegend
+
 @enduml

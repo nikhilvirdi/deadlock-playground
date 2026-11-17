@@ -1,18 +1,111 @@
 ﻿@startuml
+title Scenario Creation - Hypothetical Factory Method Design
+caption OOAD design alternative - Not implemented in Deadlock Playground
+
+left to right direction
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam roundcorner 0
 skinparam classAttributeIconSize 0
-interface ScenarioFactory {
-  + create(input: String): Scenario
+skinparam ArrowColor #444444
+skinparam linetype ortho
+
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #444444
+  FontColor #222222
 }
-class PresetScenarioFactory
-class FormScenarioFactory
-class SimulationEngine <<Facade>> {
-  + configure(factory: ScenarioFactory, input: String): void
+
+package "Hypothetical Creator Hierarchy" {
+
+  abstract class ScenarioCreator <<Creator>> {
+    + createScenario(input): Scenario
+    # makeScenario(input): Scenario
+  }
+
+  class FormScenarioCreator <<Concrete Creator>> {
+    # makeScenario(input): Scenario
+  }
+
+  class ExampleScenarioCreator <<Concrete Creator>> {
+    # makeScenario(input): Scenario
+  }
 }
-SimulationEngine --> ScenarioFactory : uses
-ScenarioFactory <|.. PresetScenarioFactory
-ScenarioFactory <|.. FormScenarioFactory
-note bottom of ScenarioFactory
-  The engine works with any Scenario.
-  A new source is one new factory class.
+
+package "Domain Product" {
+
+  class Scenario <<Product>>
+
+  class Process
+
+  class Resource
+}
+
+class "Configuration Client" as Client <<Conceptual Client>>
+
+ScenarioCreator <|-- FormScenarioCreator
+
+ScenarioCreator <|-- ExampleScenarioCreator
+
+Client --> ScenarioCreator : requests scenario creation
+
+ScenarioCreator ..> Scenario : creates product
+
+Scenario *-- Process : contains
+
+Scenario *-- Resource : contains
+
+note top of ScenarioCreator
+  createScenario() defines
+  the common creation workflow.
+
+  makeScenario() is the
+  Factory Method.
+
+  Concrete creators override
+  the factory method.
 end note
+
+note bottom of FormScenarioCreator
+  Hypothetical implementation.
+
+  Would construct a Scenario
+  from validated form input.
+end note
+
+note bottom of ExampleScenarioCreator
+  Hypothetical implementation.
+
+  Illustrates an alternative
+  creation mechanism.
+
+  Example scenario loading is
+  NOT implemented in the project.
+end note
+
+note bottom of Scenario
+  The product remains the
+  existing Scenario domain concept.
+
+  Creation details are delegated
+  to specialized creators.
+end note
+
+legend bottom
+  HYPOTHETICAL OOAD DESIGN ONLY
+
+  ScenarioCreator, FormScenarioCreator
+  and ExampleScenarioCreator are proposed
+  illustrative classes, not verified
+  components of the current Java codebase.
+
+  This diagram demonstrates the
+  Factory Method design pattern.
+
+  It does not document implemented features.
+endlegend
+
 @enduml

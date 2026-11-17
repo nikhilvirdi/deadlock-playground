@@ -1,14 +1,75 @@
 ﻿@startuml
+title Victim Selection - Before Strategy Pattern
+caption Hypothetical design comparison - Not the current implementation
+
+left to right direction
+
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam roundcorner 0
 skinparam classAttributeIconSize 0
-class SimulationEngine {
-  + recover(policyName: String): void
-  - selectVictimByPriority(list): Process
-  - selectVictimByResourcesHeld(list): Process
-  - selectVictimByRecoveryCost(list): Process
+skinparam linetype ortho
+skinparam ArrowColor #444444
+
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #444444
+  FontColor #222222
 }
+
+class SimulationEngine <<Hypothetical Design>> {
+  + recover(policyName: String, strategyName: String)
+  --
+  - selectByPriority(...)
+  - selectByResourcesHeld(...)
+  - selectByRecoveryCost(...)
+}
+
+class Process {
+  - id: String
+  - priority: int
+}
+
+SimulationEngine ..> Process : evaluates candidate victims
+
 note right of SimulationEngine
-  Every new policy means editing
-  this class. recover() branches
-  on a string.
+  Victim-selection algorithms
+  are embedded directly in
+  the simulation engine.
+
+  The engine branches on a
+  policy name to choose the
+  appropriate algorithm.
+
+  Adding another selection
+  policy requires modifying
+  this class.
 end note
+
+note bottom of Process
+  Candidate processes have
+  priorities, resource holdings
+  and execution progress.
+
+  The selection algorithms
+  evaluate these properties.
+end note
+
+legend bottom
+  BEFORE STRATEGY PATTERN
+
+  Conceptual design illustrating
+  tightly coupled victim selection.
+
+  The private selection methods
+  shown here are hypothetical,
+  not verified Java methods.
+
+  Problem:
+  Selection logic and simulation
+  orchestration are combined.
+endlegend
+
 @enduml
