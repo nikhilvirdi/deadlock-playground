@@ -1,0 +1,2 @@
+frontend/vendor/*.js -text
+frontend/vendor/*.LICENSE.txt -text

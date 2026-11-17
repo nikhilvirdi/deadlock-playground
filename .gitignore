@@ -1,8 +1,14 @@
-﻿target/
+target/
 *.class
 .idea/
 .vscode/
 *.iml
+.settings/
+.project
+.classpath
 .DS_Store
 Thumbs.db
 *.log
+*.tmp
+*.swp
+*~
