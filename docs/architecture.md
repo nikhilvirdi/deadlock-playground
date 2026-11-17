@@ -17,7 +17,11 @@ The frontend is built with HTML, CSS and vanilla JavaScript modules. It uses Cyt
 
 The architecture is **layered**, with a presentation layer, an HTTP adapter, a coordinating engine and a domain model. It can also be described loosely in MVC terms: the browser is the view, the HTTP handling performs controller-like work, and the engine and model hold simulation behavior. A strict MVC label would hide the fact that the backend has its own separate application-service boundary.
 
-![Component and package relationships](diagrams/architecture.svg)
+<p align="center">
+  <a href="diagrams/architecture.svg">
+    <img src="diagrams/architecture.svg" alt="UML component and package diagram showing presentation API engine and domain layers" width="610">
+  </a>
+</p>
 
 ### Following one command through the layers
 

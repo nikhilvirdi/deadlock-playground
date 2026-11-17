@@ -10,6 +10,12 @@ A successful configuration starts a new trial: the resources are unallocated, pr
 
 ### Resource request: who does what?
 
+<p align="center">
+  <a href="diagrams/sequence-request.svg">
+    <img src="diagrams/sequence-request.svg" alt="Sequence diagram of resource request validation, allocation, avoidance and history recording" width="540">
+  </a>
+</p>
+
 Start with a manual request from `P1` for one instance of `R2`.
 
 1. The browser sends the request to `/api/request`. `ApiServer` resolves the current session, validates the input and dispatches to that session's `SimulationEngine`.
@@ -53,6 +59,12 @@ Detection records a history event even when no deadlock exists. It is an observa
 
 ### Recovery: choosing and applying an intervention
 
+<p align="center">
+  <a href="diagrams/sequence-recover.svg">
+    <img src="diagrams/sequence-recover.svg" alt="Sequence diagram of deadlock detection, victim policy selection, intervention and recovery rounds" width="460">
+  </a>
+</p>
+
 Recovery has three separate decisions: which processes are actually deadlocked, which of them can usefully be selected as victims and what to do to the chosen victim.
 
 1. `SimulationEngine` runs detection, whether or not Detect was previously clicked.
@@ -69,6 +81,12 @@ The default victim policy is Recovery Cost, defined as held resource units plus 
 Recovery can take more than one round. If a round succeeds but later rounds cannot finish the job, the completed changes stay committed and the result is unresolved. If no intervention can begin, the state and history are preserved. This behavior would be harder to express if the detector, victim selector and recovery action were one large method with no distinct responsibilities.
 
 ### Process lifecycle
+
+<p align="center">
+  <a href="diagrams/state-process.svg">
+    <img src="diagrams/state-process.svg" alt="UML state machine of RUNNING WAITING COMPLETED and TERMINATED process states" width="720">
+  </a>
+</p>
 
 The simulator has four process states:
 

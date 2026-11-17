@@ -17,11 +17,18 @@ The primary actor is a user, usually someone exploring deadlocks or demonstratin
 | Configure scenario | Define processes, priorities, resource instances, shareability and optional request/release scripts. | Validate and install a `Scenario`; start a fresh history. |
 | Request resource | Ask for one or more instances on behalf of a running process. | Apply prevention rules, capacity constraints and optional safety checking. |
 | Release resource | Return held instances. | Update holdings and availability, then reconsider blocked requests. |
+| View resource allocation graph | Inspect processes, resources, allocation edges and pending requests. | Derive graph data from the current scenario; return it with the authoritative state. |
 | Step simulation | Execute the next eligible scripted operation. | Advance the correct process cursor and record its effects. |
 | Detect deadlock | Check whether the current state contains deadlocked processes. | Choose the appropriate detector and report the result. |
 | Recover | Select a victim policy and terminate or preempt a victim. | Detect, select an eligible victim, intervene, wake waiters and repeat as needed. |
 | Reset | Discard the active trial. | Clear the scenario and event history for the current session. |
 | Navigate history | Select an earlier or later recorded event. | Restore its snapshot and keep the displayed state synchronized. |
+
+<p align="center">
+  <a href="diagrams/use-case.svg">
+    <img src="diagrams/use-case.svg" alt="UML use case diagram showing the User and simulator actions" width="510">
+  </a>
+</p>
 
 Recovery calls detection internally, even if the user never pressed Detect. A resource request runs Banker's safety check only when avoidance is enabled. Those are dependencies between behaviors, not reasons to invent separate actors.
 
@@ -84,8 +91,20 @@ A request also exposes the need for result types. `RequestResult` communicates w
 
 These choices lead into the [domain model](domain-model.md). The [object collaboration](object-collaboration.md) document shows how the same responsibilities are exercised at runtime.
 
+<p align="center">
+  <a href="diagrams/activity-workflow.svg">
+    <img src="diagrams/activity-workflow.svg" alt="UML activity diagram showing scenario configuration, simulation, detection, recovery and history" width="740">
+  </a>
+</p>
+
 ### A concrete snapshot
 
 Suppose `P1` holds the only instance of `R1` and waits for `R2`. `P2` holds `R2` and waits for `R1`. The analysis identifies two process objects, two resource objects, holding and waiting relationships, and a detector that evaluates the current state. It does not require a special `DeadlockedProcess` subtype. Both objects remain ordinary processes whose `deadlocked` flags can be set by detection.
 
 With multiple instances, even a cycle in the graph might be resolvable. That is why the graph and the detector have distinct responsibilities: one describes current relationships; the other decides whether they constitute deadlock under the resource counts.
+
+<p align="center">
+  <a href="diagrams/object-diagram.svg">
+    <img src="diagrams/object-diagram.svg" alt="UML object diagram showing two processes in a circular resource deadlock" width="620">
+  </a>
+</p>

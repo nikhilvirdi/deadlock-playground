@@ -72,7 +72,7 @@ public int getAvailableInstances() {
 
 This sketch illustrates the intended access direction; it is not a verbatim copy of `Resource.java`. The code itself is the authority for individual accessor names and visibility. The important OOAD point is that an external client should not be able to turn a resource's availability negative merely by assigning a public field.
 
-The public engine protocol is different again. It offers use cases, not low-level setters. The HTTP endpoint wraps that protocol, validates wire-format input and returns a full state representation.
+The public engine protocol is different again. It exposes use cases, not low-level setters. The HTTP endpoint wraps that protocol, validates wire-format input and returns a full state representation.
 
 ### Inheritance, interfaces and the SOLID principles
 

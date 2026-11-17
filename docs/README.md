@@ -4,7 +4,7 @@ Deadlock Playground is an interactive simulator for exploring resource allocatio
 
 The simulator is also an object-oriented design exercise. A process holding two resources is easy enough to describe in a diagram; deciding which object owns that information, who is allowed to change it, and how a recovery operation affects the rest of the system takes more thought. These notes follow those decisions from the original problem to the Java implementation.
 
-This is documentation for people looking through the code, not a course report. It focuses on the model that actually runs: its responsibilities, relationships, interfaces, state transitions and architectural boundaries. The Operating Systems concepts provide the problem; Object-Oriented Analysis and Design (OOAD) provides the way we structure the solution.
+These pages focus on the model that actually runs: its responsibilities, relationships, interfaces, state transitions and architectural boundaries. The Operating Systems concepts provide the problem; Object-Oriented Analysis and Design (OOAD) gives us the tools to structure the solution.
 
 ### Where to start
 
@@ -36,7 +36,7 @@ The example is small, but the design also supports multiple instances per resour
 
 ### UML and implementation
 
-The UML views are organized under `diagrams/`: use case, class, object, two sequence views, process state machine, activity workflow and component architecture. The written explanations take priority over a decorative diagram: each relationship and message should correspond to the actual model. Diagram assets are being prepared separately from these Markdown documents.
+The eight UML diagrams are embedded in the documents where they are discussed: the use case, activity and object views in [Analysis](analysis.md); the class diagram in [Domain model](domain-model.md); the request and recovery sequence diagrams and process state machine in [Object collaboration](object-collaboration.md); and the component/package diagram in [Architecture](architecture.md). Each inline preview is sized for GitHub and can be clicked to open the full SVG.
 
 The backend packages are under `backend/src/main/java/com/deadlocksim/`. The main areas are `model` (domain objects and algorithms), `engine` (simulation coordination) and `api` (HTTP, JSON and session handling). The browser code is in `frontend/`. The public application is at [deadlock-playground.onrender.com](https://deadlock-playground.onrender.com/).
 

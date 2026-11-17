@@ -58,6 +58,12 @@ Consider the recovery use case. The engine asks a detection strategy for a resul
 
 ### Class relationships
 
+<p align="center">
+  <a href="diagrams/class-diagram.svg">
+    <img src="diagrams/class-diagram.svg" alt="UML class diagram of the Deadlock Playground domain model and strategy interfaces" width="760">
+  </a>
+</p>
+
 #### Scenario ownership
 
 A configured `Scenario` has at least one process and one resource type. For a given scenario, each process and resource object belongs to that configuration. This is a strong whole-part relationship in the running model: replacing the scenario replaces its configured objects and scripted operations.
