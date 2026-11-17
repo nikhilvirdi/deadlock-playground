@@ -2,6 +2,10 @@
 
 This file defines the HTTP interface between the Java backend (`com.sun.net.httpserver`) and the browser frontend (vanilla JS with Cytoscape.js). Both sides build against this document, so the shapes below are fixed unless this file is changed first.
 
+## Sessions
+
+All simulation endpoints use the requesting browser's cookie. The first successful scenario configuration issues it. Clients that call the API directly need to retain and resend the cookie across requests. The health endpoint and anonymous reads do not create a session. A missing or expired cookie yields an empty view. The API rejects conflicting origins and requires `Content-Type: application/json` on mutation requests.
+
 ## General Rules
 
 - Base URL: `http://localhost:8080/api`
@@ -14,8 +18,8 @@ This file defines the HTTP interface between the Java backend (`com.sun.net.http
 
 - POST bodies are limited to 256 KiB of UTF-8 JSON. Larger bodies return HTTP 413 with `PAYLOAD_TOO_LARGE`. Integers must be JSON numbers with exact values in the signed 32-bit range. Totals and operation counts must be positive. Priorities may be negative or zero.
 - A scenario supports up to 32 processes, 32 resource types, 256 instances per resource type, and 2,048 scripted operations across all processes. Scenario names and IDs must be nonblank, at most 128 characters, and free of control characters.
-- Event history can hold up to 2,048 events. An action reserves space for its possible events before it runs and returns HTTP 409 with `HISTORY_LIMIT` if there is too little room. No snapshots are evicted. Earlier snapshots remain accessible and a successful action from an earlier snapshot can branch as usual.
-- The OpenJDK server defaults are eight request workers, 16 queued tasks, 32 connections, a five-second request timeout, and a ten-second response timeout. Request and response deadlines use built-in JVM properties and close the connection when exceeded. Saturation can still cause a dropped connection. Engine state access remains serialized.
+- Event history can hold up to 2,048 events per session, subject to a lower memory budget for large configurations. An action reserves space for its possible events before it runs and returns HTTP 409 with `HISTORY_LIMIT` if there is too little room. No snapshots are evicted. Earlier snapshots remain accessible and a successful action from an earlier snapshot can branch as usual.
+- The OpenJDK server defaults are eight request workers, 16 queued tasks, 32 connections, a five-second request timeout, and a ten-second response timeout. Request and response deadlines use built-in JVM properties and close the connection when exceeded. Saturation can still cause a dropped connection. Access is serialized within each session.
 
 ### Error Shape
 
@@ -41,6 +45,10 @@ Error codes:
 | `NO_DEADLOCK` | Recover is called without a detected deadlock (UC6 precondition). |
 | `INVALID_POLICY` | An unknown victim policy or recovery strategy name is given. |
 | `INVALID_HISTORY_INDEX` | A history jump points outside the recorded events. |
+| `STALE_VIEW` | HTTP 409. A conditional history jump refers to an older view. |
+| `FORBIDDEN_ORIGIN` | HTTP 403. Host, Origin, or Fetch Metadata conflicts with the simulator origin. |
+| `UNSUPPORTED_MEDIA_TYPE` | HTTP 415. A mutation request did not use JSON content type. |
+| `SESSION_LIMIT` | HTTP 503. The active session limit has been reached. |
 
 ## State Object
 
@@ -48,7 +56,7 @@ Every endpoint returns this object as `data.state`. It is the single source the 
 
 ```json
 {
-  "scenario": { "name": "Textbook figure", "bankersAvoidance": false },
+  "scenario": { "name": "Textbook figure", "bankersAvoidance": false, "configurationRevision": 1 },
   "step": 4,
   "prevention": {
     "mutualExclusion": false,
@@ -64,20 +72,23 @@ Every endpoint returns this object as `data.state`. It is the single source the 
       "deadlocked": false,
       "held": [ { "resource": "R2", "count": 1 } ],
       "waitingFor": { "resource": "R1", "count": 1 },
-      "pendingOperations": 2
+      "operations": [ { "type": "REQUEST", "resource": "R1", "count": 1 } ],
+      "pendingOperations": 1
     }
   ],
   "resources": [
-    { "id": "R1", "name": "R1", "total": 1, "available": 0, "shareable": false }
+    { "id": "R1", "name": "R1", "total": 1, "available": 0, "shareable": false },
+    { "id": "R2", "name": "R2", "total": 1, "available": 0, "shareable": false }
   ],
   "graph": {
     "nodes": [
-      { "data": { "id": "P1", "label": "P1", "type": "process" } },
-      { "data": { "id": "R1", "label": "R1", "type": "resource", "instances": 1 } }
+      { "data": { "id": "process:P1", "label": "P1", "type": "process", "deadlocked": false } },
+      { "data": { "id": "resource:R1", "label": "R1", "type": "resource", "instances": 1 } },
+      { "data": { "id": "resource:R2", "label": "R2", "type": "resource", "instances": 1 } }
     ],
     "edges": [
-      { "data": { "id": "e1", "source": "R2", "target": "P1", "kind": "allocation", "inCycle": false } },
-      { "data": { "id": "e2", "source": "P1", "target": "R1", "kind": "request", "inCycle": false } }
+      { "data": { "id": "edge:2", "source": "resource:R2", "target": "process:P1", "kind": "allocation", "count": 1, "inCycle": false, "deadlocked": false } },
+      { "data": { "id": "edge:1", "source": "process:P1", "target": "resource:R1", "kind": "request", "count": 1, "inCycle": false, "deadlocked": false } }
     ]
   }
 }
@@ -86,9 +97,12 @@ Every endpoint returns this object as `data.state`. It is the single source the 
 Field notes:
 
 - `step` is the viewed position, the sequence of the event the state corresponds to.
+- Graph node IDs are namespaced by kind, and edge IDs have their own namespace. Use the node label for display and the raw ID in the process or resource list for simulation commands.
+- A graph edge with `inCycle: true` belongs to a structural cycle. Confirmed process flags are available as `deadlocked`. Edges carry confirmed highlighting for single-instance cycles only. In multi-instance scenarios the confirmed process nodes show the detection result.
+- `scenario.configurationRevision` identifies this configuration for the lifetime of the session. It stays constant across steps and history jumps.
+- `processes[].operations` contains the complete authoritative script in execution order for that process, including operations already completed.
 - `state` is one of `RUNNING`, `WAITING`, `COMPLETED`, `TERMINATED`. `deadlocked` is a separate flag. `pendingOperations` is zero for completed and terminated processes.
 - `graph` follows the Cytoscape.js `data` wrapper, so it can be passed to Cytoscape without conversion.
-- `inCycle` is true for edges that belong to a detected cycle. It is false until detection runs.
 
 ## Endpoints
 
@@ -211,7 +225,7 @@ Response:
 }
 ```
 
-`strategy` is `CYCLE` for single-instance resources and `BANKERS` otherwise. `cycle` contains one cycle for a positive `CYCLE` result and is null otherwise. The `BANKERS` process list excludes waiters with zero exclusive holdings.
+A negative detection is a successful result and records a detection event, including when no process is waiting. `strategy` is `CYCLE` for single-instance resources and `BANKERS` otherwise. `cycle` contains one cycle for a positive `CYCLE` result and is null otherwise. The `BANKERS` process list excludes waiters with zero exclusive holdings.
 
 ### POST /api/recover (UC6: Recover)
 
@@ -238,19 +252,19 @@ Response:
 }
 ```
 
-`rounds` holds one entry per victim. Both strategies choose victims that hold a contended exclusive resource on a blocking cycle. `resolved` is false if the system could not clear the deadlock.
+`rounds` holds one entry per victim. Both strategies choose victims that hold a contended exclusive resource on a blocking cycle. `resolved` is false when a deadlock remains. If no eligible round can be performed, `rounds` is empty and the original state and history stay intact. If no deadlock exists or an error interrupts the command, the API returns an error and preserves the pre-command state and history.
 
 ### POST /api/reset (UC7: Reset)
 
 Request: `{ "confirmed": true }`
 
-If the history is not empty and `confirmed` is false, the response is `VALIDATION_ERROR` with a message asking for confirmation. This matches alternate flow 1a.
+If the session history contains actions beyond setup and `confirmed` is false, the response is `VALIDATION_ERROR` asking for confirmation. Reset clears only the requesting session.
 
-Response: `{ "ok": true, "data": { "state": { } } }`
+The successful response has `data.state: null`.
 
 ### GET /api/history
 
-Returns the event list.
+Returns the event list. With `?view=true`, it also returns `state`, `serverId`, and `revision` from the same read. When no scenario is configured, this view has `state: null` and an empty event list. Successful simulation POST responses include the same revision fields for their result. Within a `serverId` (the public revision namespace for that session), the revision increases for committed events, scenario replacement, reset, and navigation to a different snapshot.
 
 Response:
 
@@ -274,7 +288,7 @@ Request: `{ "seq": 1 }`
 
 Response: `{ "ok": true, "data": { "state": { } } }`
 
-Jumping does not delete later events. The history stays read-only, as decided in the design.
+A jump can include `from`, formed as `serverId:revision` from the view it refers to. If that revision has changed, the server returns `STALE_VIEW` before changing the selection. Jumping preserves later events. Only commands that record a committed transition or informational event branch the history.
 
 ## Ownership
 

@@ -37,9 +37,10 @@ Ties go to the lower process ID. Every successful scripted request or release co
 
 - Event types: REQUEST, GRANT, BLOCK, RELEASE, STATE_CHANGE, AVOIDANCE_CHECK (safe or unsafe, with the sequence), DETECT, VICTIM_SELECTED, TERMINATE, PREEMPT, ROLLBACK, RESOLVED.
 - Navigation: users can step backward and forward, or click any event to jump to that state.
-- Storage: each event stores a snapshot of the system. At this scale that is cheap, and it makes stepping back a simple restore.
-- The history itself is read-only.
-- A new action after a jump discards the events after the jump point. Jumping alone never removes events.
+- Storage: each selectable event points to a stable snapshot. The scenario configuration and its maximum claims are shared by all snapshots in that scenario. Snapshots preserve the execution cursor, instruction count, holdings, and the provenance of any pending request.
+- Events from one transition can share a snapshot. A release, any grants it enables, and their completions all restore the state after those effects. A safety check and its successful grant share the resulting state. In recovery, victim selection restores the state before the intervention. The recovery events for a round restore the state after its wake-ups and redetection.
+- A successful command commits its events together and discards any future after the selected snapshot. Jumping, a rejected manual prevention request, and a failed command with no committed effects preserve the event list. Detect is informational and records an event even when it finds no deadlock.
+- A recovery that cannot continue after completing one or more rounds commits those rounds and reports an unresolved result. A command that throws restores its starting state and discards its staged events.
 
 ## Process States
 
