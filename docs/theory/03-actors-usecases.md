@@ -2,111 +2,117 @@
 
 ## Actors
 
-- User (student or instructor): configures scenarios, steps through operations, runs detection, and chooses a recovery method.
-- System: the simulation engine. It validates requests, updates the graph, and runs detection and recovery. It is internal, and it is listed only to clarify which responsibilities belong where.
+- **User.** A student or instructor who configures and runs simulations, inspects Event History, and chooses how to recover from deadlock.
+
+The browser frontend sends commands and reads results through HTTP endpoints. The backend validates commands, and the internal simulation engine manages resource allocations, process states, detection, recovery, and history. The frontend renders the returned state in the graph and panels. The backend isolates each browser session's simulation.
 
 ## UC1: Configure Scenario
 
-- Actor: User
-- Pre-condition: The application is open. No simulation is running, or the user has reset.
-- Main flow:
-  1. User adds processes and sets each process's priority.
-  2. User adds resource types and sets the instance count for each.
-  3. User defines each process's request and release sequence.
-  4. User sets the prevention toggles, if wanted.
-  5. System validates the configuration and draws the initial graph.
-- Alternate flows:
-  - 5a. Invalid input (duplicate IDs, zero instances, or a process requesting more instances than exist): the system shows an error and keeps the form open.
-  - 5b. User loads a preset scenario, such as the textbook figure: the system fills in the configuration from the preset.
-- Post-condition: A valid scenario is loaded, all processes are Running, and the initial graph is shown.
+- **Actor.** User
+- **Precondition.** The application is open and the configuration form is available.
+- **Main flow**
+  1. The user enters a scenario name and adds processes with IDs and priorities.
+  2. The user adds resource types with IDs, total instances, and shareability.
+  3. The user can enter an ordered script of request and release operations for each process. Each operation specifies its process, action, resource, and count.
+  4. The user chooses whether to enable Banker's avoidance and can enable any of the four prevention options. These are Mutual Exclusion, Hold and Wait, Release When Blocked, and Circular Wait.
+  5. The user clicks Configure. The frontend validates the form, and the backend validates and loads the submitted scenario. A valid submission replaces any active scenario in the same session directly, clearing its prior execution progress and history.
+- **Alternate flows**
+  - **5a.** If the scenario is missing a process or resource type, has a blank name or ID, or repeats an ID within the process or resource list, configuration is rejected. The form reports the error, and any active scenario is preserved.
+  - **5b.** The backend also rejects malformed values, including invalid priorities or flags, names or IDs over 128 characters or containing control characters, and resource totals outside 1 to 256. Script entries must refer to configured IDs, use a supported action and a positive integer count, and keep each request within the resource's total capacity. A scenario can contain up to 32 processes, 32 resource types, and 2,048 operations.
+  - **5c.** With Banker's avoidance enabled, the script must define valid maximum claims. Its running allocation for each resource must stay between zero and that resource's total capacity.
+- **Postcondition.** The scenario is active in the current session. Its processes are Running, its resources start unallocated, the graph and panels show the initial state, and Event History begins with the initial snapshot.
 
-## UC2: Request Resource (includes avoidance check)
+## UC2: Request Resource
 
-- Actor: User
-- Pre-condition: A scenario is loaded, and the process is Running.
-- Main flow:
-  1. User selects a process and a resource type, then clicks Request.
-  2. System checks the prevention rules, for example global ordering when circular-wait is on.
-  3. System runs the Banker's safety check on the tentative grant.
-  4. If the state is safe, the resource is granted and the graph updates.
-  5. The event is recorded in history.
-- Alternate flows:
-  - 2a. A prevention rule is violated: the request is rejected, with an explanation.
-  - 3a. The state is unsafe: the request is denied, the process moves to Waiting, and the unsafe reasoning is shown.
-  - 4a. No instance is free: the process moves to Waiting, and a request edge is drawn.
-- Post-condition: The request is granted or blocked, and the graph and history reflect the outcome.
+- **Actor.** User
+- **Precondition.** A scenario is loaded. The requested process must be Running.
+- **Main flow**
+  1. The user selects a process and resource in Actions, enters a count, and clicks Request.
+  2. The engine validates the request and applies the enabled prevention rules. With Mutual Exclusion prevention enabled, sharing applies to resource types marked shareable.
+  3. With Banker's avoidance enabled, the requested holdings must fit the process's declared maximum claim, which is derived from its script. If capacity is available, the safety check evaluates the tentative allocation and all active processes' remaining needs. Demo mode bypasses this safety check.
+  4. When the result is `GRANTED`, the engine adds the units to the process's holdings. Only exclusive allocations reduce the available pool. The graph and panels reflect the grant, and history records it. An immediate grant in avoidance mode also records its safety check.
+- **Alternate flows**
+  - **2a.** `REJECTED_PREVENTION` means an enabled rule refused the request. Hold and Wait requires empty holdings before a new request group. Circular Wait permits requests only above the highest resource already held in the configured order. A manual prevention rejection explains the rule and preserves state and history.
+  - **2b.** Invalid input, such as an unknown ID, a nonpositive count, an attempt by a process that is not Running, or a request exceeding a declared claim with avoidance enabled, produces a validation error and preserves state and history.
+  - **3a.** `BLOCKED` means the required capacity is unavailable and the process waits on a pending request. If Release When Blocked applies, the engine returns the process's existing holdings and queues them together with the new demand. Waits update the graph and are recorded in history.
+  - **3b.** `DENIED_UNSAFE` means the tentative grant fails Banker's safety check. The engine keeps allocations intact, puts the process in Waiting with the request pending, and records the safety result.
+- **Postcondition.** A grant or wait is reflected in the updated state and history. A manual request, including one granted later, leaves the scripted operation position intact.
 
 ## UC3: Release Resource
 
-- Actor: User
-- Pre-condition: The process holds at least one instance of the resource.
-- Main flow:
-  1. User selects a process and a held resource, then clicks Release.
-  2. System removes the allocation edge and returns the instance to the pool.
-  3. System checks whether any Waiting process can now be granted its request, and grants it if so.
-  4. The graph and history update.
-- Alternate flow:
-  - 1a. The process does not hold the resource: the system shows an error.
-- Post-condition: The instance is available again, and any unblocked process moves to Running.
+- **Actor.** User
+- **Precondition.** A scenario is loaded, and the selected process holds at least the requested release count for the selected resource.
+- **Main flow**
+  1. The user selects a process, resource, and count in Actions and clicks Release.
+  2. The engine reduces the process's holdings. It returns exclusive units to the available pool and updates the allocation edge to reflect any units still held.
+  3. The engine checks pending requests and grants those it can satisfy under the active settings. A process whose final scripted request is granted moves directly to Completed and returns its remaining holdings. Those releases can enable more pending requests.
+  4. The frontend displays the updated graph and panels. History records the release and any resulting grants and completions.
+- **Alternate flow**
+  - **2a.** If the process holds fewer units than requested or the release input is invalid, the application reports an error and preserves the current state and history.
+- **Postcondition.** The release and any resulting allocations are reflected in the resource pool. Granted waiters become Running or Completed.
 
 ## UC4: Step Through Simulation
 
-- Actor: User
-- Pre-condition: A scenario is loaded.
-- Main flow:
-  1. User clicks Step.
-  2. System executes the next pending operation in scenario order.
-  3. System updates the graph, the process states, and the history.
-- Alternate flows:
-  - 2a. No operations are pending: the system reports that the scenario is finished and disables Step.
-  - 2b. Next operation is blocked: the process moves to Waiting. Its request stays pending and is granted automatically when the resource frees up, after which the process continues with its next operation.
-  - 2c. User steps back through history: the system restores the snapshot from the previous event.
-- Post-condition: One operation has been applied, or the user has moved back to an earlier state.
+- **Actor.** User
+- **Precondition.** A scenario is loaded. The Step control is available when a Running process has pending scripted work.
+- **Main flow**
+  1. The user clicks Step in Actions.
+  2. In configured process order, the engine selects the first Running process with a pending operation and attempts its next scripted request or release. With Hold and Wait enabled, it treats consecutive scripted requests as one group and grants them together. If Circular Wait is also enabled, it checks the resource order within the group.
+  3. Successful scripted operations advance that process's position in the script. When its last operation succeeds, the process becomes Completed and releases its remaining holdings. The graph, panels, and history reflect the committed changes.
+- **Alternate flows**
+  - **2a.** When a scripted request or group is blocked or denied as unsafe, it stays pending and the process waits. Other eligible processes can run on subsequent steps. If the pending request is granted later, the engine advances exactly the operations in that request or group.
+  - **2b.** A scripted prevention violation stops that process's script, marks it Terminated, and releases its holdings. A validation error, such as releasing more units than the process holds, preserves state and history.
+  - **2c.** When no operation is runnable, Step is disabled in the frontend. A Step command sent directly to the backend reports that execution is finished if no pending work remains among nonterminal processes. If pending work is blocked, it reports that no process can run. Completed and Terminated processes are excluded from the pending-work check.
+- **Postcondition.** Successful operations advance execution. Pending waits retain their script position until granted, and terminated scripts no longer count toward completion.
 
 ## UC5: Detect Deadlock
 
-- Actor: User
-- Pre-condition: At least one process is Waiting.
-- Main flow:
-  1. User clicks Detect.
-  2. System selects the strategy: cycle detection if every resource has a single instance, and Banker's-style detection otherwise.
-  3. System identifies the deadlocked processes and the cycle or dependency chain.
-  4. Deadlocked processes are shown in red in the graph and flagged in the panels.
-  5. The result is recorded in history.
-- Alternate flow:
-  - 3a. No deadlock is found: the system reports that the system is deadlock-free and records that result.
-- Post-condition: The detection result is displayed, and deadlocked processes are flagged.
+- **Actor.** User
+- **Precondition.** A scenario is loaded.
+- **Main flow**
+  1. The user clicks Detect. The engine chooses cycle detection if every resource type has a single instance. For multi-instance scenarios it uses Banker's-style detection based on allocations, available instances, and outstanding requests.
+  2. The frontend reports the confirmed deadlocked processes and displays one cycle when the single-instance detector returns it. Multi-instance detection reports the affected process IDs. Structural cycles can exist in a multi-instance graph even when detection finds that processes can proceed.
+  3. The graph shows structural-cycle edges in gray and uses thicker edges for confirmed single-instance deadlock cycles. Confirmed deadlocked process nodes have a heavier outline and a `DEADLOCKED` label. The Processes panel marks the same processes.
+  4. The detection result is recorded in Event History.
+- **Alternate flow**
+  - **2a.** If detection finds no deadlock, including when no process is waiting, the frontend reports “No deadlock detected.” The successful result clears deadlocked process flags and is recorded in Event History.
+- **Postcondition.** The displayed detection result and process flags reflect the checked state.
 
-## UC6: Recover from Deadlock (includes UC5, extended by Preempt)
+## UC6: Recover from Deadlock
 
-- Actor: User
-- Pre-condition: A deadlock has been detected.
-- Main flow:
-  1. User selects a victim policy: priority, resources held, or recovery cost. The default is recovery cost.
-  2. System selects the victim and records VICTIM_SELECTED.
-  3. The victim is terminated, and its resources are released.
-  4. System runs detection again to confirm that the deadlock is resolved.
-  5. Waiting processes that can now proceed move to Running.
-- Alternate flows:
-  - 3a. User chooses preemption: a resource is taken from a deadlocked process, and that process is rolled back to its initial state. This is the Preempt extension.
-  - 4a. The deadlock persists: the system repeats steps 2 to 4 with the next victim.
-- Post-condition: The deadlock is resolved, or the system reports that recovery failed. History contains RESOLVED.
+- **Actor.** User
+- **Precondition.** A scenario is loaded.
+- **Main flow**
+  1. The user chooses Priority, Resources Held, or Recovery Cost and selects Terminate or Preempt. Recovery Cost is the default policy. The user clicks Recover.
+  2. The engine runs deadlock detection internally and uses the selected policy to choose an eligible victim. Eligible victims hold exclusive units involved in a blocking cycle.
+  3. Terminate stops the chosen process and releases its holdings. Preempt selects a contested resource and rolls the victim back to its initial Running state, returning its holdings and resetting its script position and executed-instruction count.
+  4. The engine grants eligible pending requests, reruns detection, and repeats the intervention while a deadlock and an eligible victim remain.
+  5. The frontend reports the rounds and whether recovery resolved the deadlock. Committed rounds record detection, victim selection, the selected intervention, and any resulting grants. Preemption records both preemption and rollback. When at least one round commits, the final `RESOLVED` entry records the overall outcome.
+- **Alternate flows**
+  - **2a.** If the initial check finds no deadlock, the backend returns `NO_DEADLOCK`. The frontend explains that recovery is unnecessary, and the attempt preserves state and history.
+  - **4a.** If a deadlock remains and no eligible intervention remains, the system reports it as unresolved. Any completed rounds are committed. If no round could start, state and history are preserved.
+  - **4b.** A command rejected by the backend, such as one with an invalid policy or strategy, reports an error. If the engine throws during an attempt, it restores the pre-command state and retains the original history.
+- **Postcondition.** The graph, panels, and history reflect the committed recovery rounds. An unsuccessful attempt with no committed intervention leaves the original state available.
 
 ## UC7: Reset Scenario
 
-- Actor: User
-- Pre-condition: A scenario is loaded.
-- Main flow:
-  1. User clicks Reset.
-  2. System restores the configuration to its initial state: all processes Running, no allocations.
-  3. History is cleared, and the initial snapshot is recorded as the first entry.
-- Alternate flow:
-  - 1a. If the history is not empty, the user is asked to confirm, to prevent accidental loss.
-- Post-condition: The scenario is back to its initial state.
+- **Actor.** User
+- **Precondition.** A scenario is loaded in the current browser session.
+- **Main flow**
+  1. The user clicks Reset. The frontend first sends the request without confirmation.
+  2. If Event History contains only the initial event, the engine clears the active scenario immediately. A confirmed reset also clears any larger history.
+  3. The frontend returns to the unconfigured view. The graph displays its empty-state message, the Processes and Resources panels are empty, and Event History has no entries.
+- **Alternate flow**
+  - **2a.** If the full history contains more than one event, even when an earlier event is selected, the backend requires confirmation. The frontend prompts the user and retries with confirmation if accepted. Cancelling preserves the scenario, execution progress, and history.
+- **Postcondition.** The requesting session has no active scenario, allocations, waiting requests, execution progress, or recorded snapshots. Other sessions retain their own simulations.
+
+## Event History Navigation
+
+The user selects an event or uses Step Back and Step Forward to restore a recorded snapshot. The graph, Processes and Resources panels, script progress, and selected history event show the same restored state. Navigation preserves all recorded events. A valid action that commits a new event from an earlier snapshot replaces the later events with a new branch. Rejected commands that commit no events preserve the existing branch.
 
 ## Relationships
 
-- UC2 includes the safe-state check (avoidance).
-- UC6 includes UC5, because recovery always needs detection first.
-- Preempt extends UC6, because it runs only when the user chooses it.
-- The User actor is connected to all seven use cases.
+- The User is associated with UC1 through UC7.
+- UC2 uses the safe-state check conditionally when Banker's avoidance is enabled.
+- UC6 uses the detection logic described in UC5 before recovery and after each round. It runs detection internally when the user clicks Recover.
+- Preempt is an alternative recovery strategy within UC6.

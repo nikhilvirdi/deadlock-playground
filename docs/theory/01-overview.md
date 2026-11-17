@@ -4,20 +4,26 @@
 
 In an operating system, processes compete for shared resources such as printers, files, and memory. A deadlock happens when a group of processes each hold a resource and wait for a resource held by another process in the same group. None of them can move forward, so they wait forever.
 
-Example: P1 holds R1 and requests R2, while P2 holds R2 and requests R1. Neither can finish.
+Suppose R1 and R2 each have one instance. P1 holds R1 and requests R2, while P2 holds R2 and requests R1. Both processes remain blocked.
 
-Textbooks usually show deadlock as a static diagram, which makes it hard to see how the circular dependency builds up step by step. This project is meant to fill that gap.
+Textbooks usually show deadlock as a static diagram, which makes it hard to see how a circular dependency develops. The interactive Resource Allocation Graph (RAG) lets students follow that dependency as requests and allocations change.
 
 ## What the Simulator Does
 
-The user works through a scenario in four steps:
+1. **Configure a scenario.** Define processes and their priorities, resource types and their instance counts and shareability, and any scripted sequences of requests and releases. Choose the prevention and avoidance settings for the scenario.
+2. **Execute operations.** Request or release resources manually, or use Step to advance the configured sequences. The graph shows processes and resource types, with dots for resource instances and directed edges for requests and allocations.
+3. **Detect deadlocks.** The detector uses cycle detection when every resource type has a single instance. With multiple instances, a structural cycle can occur even when processes can still finish, so detection evaluates current requests, allocations, and available instances. The graph and Processes panel mark confirmed deadlocked processes.
+4. **Recover.** Select the Priority, Resources Held, or Recovery Cost policy to choose a victim. Termination stops the victim and releases its resources. Preemption releases the victim's resources and resets it to the start of its operation sequence. The simulator checks for remaining deadlocks after each recovery round.
+5. **Review the event history.** Move backward or forward through recorded snapshots, or select an event directly. A valid action that records a new event from an earlier snapshot creates a branch and replaces the later events. Reset discards the active scenario, its simulation state, and its history, returning the application to the unconfigured state.
 
-1. Configure: define processes, resource types, instance counts, priorities, and request and release sequences.
-2. Simulate: issue requests and releases one at a time and watch the Resource Allocation Graph (RAG) update.
-3. Detect: check whether a deadlock exists. Deadlocked processes and the cycle are marked.
-4. Recover: terminate or preempt a victim chosen by a policy, release its resources, and check that the deadlock is gone.
+**Banker's avoidance** is optional and enabled during scenario configuration. It derives each process's declared maximum resource claims from the greatest number of instances of each resource it would hold at once in its operation sequence. In this mode, a grant requires a safe sequence. With avoidance disabled, demonstration mode permits unsafe allocations and lets users construct deadlocks when the chosen prevention settings allow them.
 
-The aim is not to run a real operating system. The aim is to make the cause and the fix of a deadlock easy to see and easy to experiment with.
+Four prevention controls illustrate how changing a Coffman condition affects the simulation.
+
+- **Mutual Exclusion** permits sharing for resource types marked shareable.
+- **Hold and Wait** requires a process to release its holdings before starting a new request group. Consecutive scripted requests in a group are granted together.
+- **Release When Blocked** targets the no-preemption condition. If a request must wait for an unavailable resource, the process returns its holdings and waits to reacquire them together with its new request.
+- **Circular Wait** imposes the configured resource order. A process can request only resources ranked above those it already holds.
 
 ## Users
 
@@ -26,28 +32,19 @@ The aim is not to run a real operating system. The aim is to make the cause and 
 
 ## Scope
 
-This is a complete learning tool. There is no later version planned, because it is a college coursework project with a single submission. All major deadlock concepts are covered, and the implementation stays a focused mini-project.
+Deadlock Playground is a Java 17 application developed for Object-Oriented Analysis and Design coursework. Its browser interface lets students and instructors examine how deadlocks arise and compare ways to prevent, avoid, detect, and recover from them.
 
-### Must-have
+### Browser sessions
 
-- Configuration of processes, resource types, instance counts, and resource requirements.
-- Resource Allocation Graph with request and allocation edges, updated after each step, with cycles marked.
-- Step-by-step simulation with process states.
-- Deadlock detection: cycle detection for single-instance resources and Banker's-style detection for multiple-instance resources.
-- Deadlock avoidance: Banker's safety check and resource-request algorithm.
-- Prevention toggles for each Coffman condition.
-- Deadlock recovery: process termination and resource preemption.
-- Victim selection policies: priority, resources held, and recovery cost.
-- Execution history with backward and forward navigation.
-- Interactive UI with the graph, panels, and controls.
-- In-app learning docs (page list decided at the end).
+Browser clients with separate sessions have independent scenarios and histories. The server keeps these sessions temporarily in memory. A page refresh displays the current state of the same session. Idle sessions expire, and a server restart clears all sessions.
 
-### Explained in the docs only, not simulated
+### Coursework theory
 
-- Rollback to a checkpoint, livelock, and starvation.
+The separate coursework theory documents discuss checkpoint rollback, livelock, and starvation at the operating-system level.
 
-### Cut
+### Out of scope
 
 - Performance dashboards and utilisation analysis.
-- Auto-play Start and Pause controls.
-- Persistence, multi-user support, and real OS integration.
+- Automatic playback, textbook scenario presets, and dedicated in-app learning pages.
+- User accounts, authentication, databases, and permanently saved simulations.
+- Real operating-system integration and general-purpose process checkpoint rollback.
