@@ -95,6 +95,8 @@ public class ApiServer {
         defaultProperty("sun.net.httpserver.maxRspTime", "10");
         defaultProperty("sun.net.httpserver.timerMillis", "250");
         defaultProperty("jdk.httpserver.maxConnections", "32");
+        // Drain slightly oversized uploads after writing the 413 so closing the socket can deliver its body.
+        defaultProperty("sun.net.httpserver.drainAmount", Integer.toString(MAX_BODY_BYTES + 1));
         server = HttpServer.create(new InetSocketAddress(bindAddress, port), 32);
         executor = new ThreadPoolExecutor(8, 8, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(16));
         server.setExecutor(executor);
