@@ -1,6 +1,5 @@
 package com.deadlocksim.api;
 
-import com.deadlocksim.engine.SimulationEngine;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.AfterEach;
@@ -18,7 +17,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ApiServerHealthTest {
-    private SimulationEngine engine;
     private ApiServer server;
     private int boundPort;
     private HttpClient client;
@@ -26,8 +24,7 @@ class ApiServerHealthTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        engine = new SimulationEngine();
-        server = new ApiServer(engine);
+        server = ApiTestSessions.server();
         boundPort = server.start();
         client = HttpClient.newHttpClient();
         gson = new Gson();

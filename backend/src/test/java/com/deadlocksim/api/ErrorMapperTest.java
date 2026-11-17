@@ -31,7 +31,6 @@ class ErrorMapperTest {
 
     @BeforeEach
     void setUp() {
-        client = HttpClient.newHttpClient();
         gson = new Gson();
     }
 
@@ -43,8 +42,9 @@ class ErrorMapperTest {
     }
 
     private void startServerWithEngine(SimulationEngine engine) throws IOException {
-        server = new ApiServer(engine);
+        server = ApiTestSessions.server();
         boundPort = server.start();
+        client = ApiTestSessions.client(server, boundPort, engine);
     }
 
     @Test
@@ -237,6 +237,7 @@ class ErrorMapperTest {
 
     private HttpResponse<String> sendPost(String path, String body) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + boundPort + path))
+                .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body)).build();
         return client.send(request, HttpResponse.BodyHandlers.ofString());
     }

@@ -28,13 +28,14 @@ import static org.junit.jupiter.api.Assertions.*;
 @Timeout(20)
 class ApiValidationTest {
     private final SimulationEngine engine = new SimulationEngine();
-    private final ApiServer server = new ApiServer(engine);
-    private final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+    private final ApiServer server = ApiTestSessions.server();
+    private HttpClient client;
     private int port;
 
     @BeforeEach
     void start() throws IOException {
         port = server.start();
+        client = ApiTestSessions.client(server, port, engine);
     }
 
     @AfterEach
@@ -168,7 +169,7 @@ class ApiValidationTest {
         assertEquals("NO_SCENARIO", json(post("step", boundary).body()).getAsJsonObject("error").get("code").getAsString());
         assertFailure(post("step", boundary + " "), 413, "PAYLOAD_TOO_LARGE");
         byte[] excessive = (boundary + " ").getBytes(StandardCharsets.UTF_8);
-        HttpRequest chunked = request("step")
+        HttpRequest chunked = request("step").header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(excessive))).build();
         assertFailure(client.send(chunked, HttpResponse.BodyHandlers.ofString()), 413, "PAYLOAD_TOO_LARGE");
         assertEquals(200, get("health").statusCode());
@@ -179,8 +180,8 @@ class ApiValidationTest {
         try (Socket stalled = new Socket()) {
             stalled.connect(new InetSocketAddress("localhost", port), 2000);
             stalled.setSoTimeout(9000);
-            stalled.getOutputStream().write(("POST /api/step HTTP/1.1\r\nHost: localhost\r\n"
-                    + "Content-Length: 2\r\nConnection: close\r\n\r\n{").getBytes(StandardCharsets.UTF_8));
+            stalled.getOutputStream().write(("POST /api/step HTTP/1.1\r\nHost: localhost:" + port + "\r\n"
+                    + "Content-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{").getBytes(StandardCharsets.UTF_8));
             assertEquals(200, get("health").statusCode());
             try {
                 assertEquals(-1, stalled.getInputStream().read());
@@ -194,9 +195,9 @@ class ApiValidationTest {
     @Test
     void concurrentRequestsReserveCapacityOnlyOnce() throws Exception {
         configure(false);
-        var first = client.sendAsync(request("request").POST(HttpRequest.BodyPublishers.ofString(allocation("P", "R", "2"))).build(),
+        var first = client.sendAsync(request("request").header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(allocation("P", "R", "2"))).build(),
                 HttpResponse.BodyHandlers.ofString());
-        var second = client.sendAsync(request("request").POST(HttpRequest.BodyPublishers.ofString(allocation("Q", "R", "2"))).build(),
+        var second = client.sendAsync(request("request").header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(allocation("Q", "R", "2"))).build(),
                 HttpResponse.BodyHandlers.ofString());
         assertEquals(Set.of("GRANTED", "BLOCKED"), Set.of(data(first.get()).get("outcome").getAsString(),
                 data(second.get()).get("outcome").getAsString()));
@@ -221,6 +222,26 @@ class ApiValidationTest {
         assertEquals(200, post("history/jump", "{\"seq\":0}").statusCode());
         assertEquals(history, get("history").body());
         assertEquals(200, post("request", allocation("P", "R", "1")).statusCode());
+        assertEquals(2, data(get("history")).getAsJsonArray("events").size());
+    }
+
+    @Test
+    void largeConfigurationsReachTheirMemoryBudgetBeforeTheHistoryEventCap() throws Exception {
+        var scenario = new com.deadlocksim.model.Scenario("Large history");
+        for (int i = 0; i < ApiInput.MAX_PROCESSES; i++) {
+            scenario.addProcess(new com.deadlocksim.model.Process("P" + i, 1));
+        }
+        for (int i = 0; i < ApiInput.MAX_RESOURCES; i++) {
+            scenario.addResource(new com.deadlocksim.model.Resource("R" + i, 1, false));
+        }
+        engine.configure(scenario);
+        for (int i = 0; i < 221; i++) engine.detect();
+        String current = get("state").body();
+        String events = get("history").body();
+        assertFailure(post("detect", "{}"), 409, "HISTORY_LIMIT");
+        assertUnchanged(current, events);
+        assertEquals(200, post("history/jump", "{\"seq\":0}").statusCode());
+        assertEquals(200, post("detect", "{}").statusCode());
         assertEquals(2, data(get("history")).getAsJsonArray("events").size());
     }
 

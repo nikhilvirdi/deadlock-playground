@@ -1,6 +1,5 @@
 package com.deadlocksim.api;
 
-import com.deadlocksim.engine.SimulationEngine;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -10,6 +9,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
@@ -33,21 +33,18 @@ class ApiServerStaticTest {
     @TempDir
     Path outsideDir;
 
-    private SimulationEngine engine;
     private ApiServer server;
     private int boundPort;
     private HttpClient client;
 
     @BeforeEach
     void setUp() throws IOException {
-        engine = new SimulationEngine();
-
         Files.writeString(tempDir.resolve("index.html"), "<!DOCTYPE html><html><body><h1>Hello Test</h1></body></html>", StandardCharsets.UTF_8);
         Path cssDir = tempDir.resolve("css");
         Files.createDirectories(cssDir);
         Files.writeString(cssDir.resolve("style.css"), "body { color: #222; }", StandardCharsets.UTF_8);
 
-        server = new ApiServer(engine, 0, tempDir);
+        server = new ApiServer(InetAddress.getLoopbackAddress(), 0, tempDir, null);
         boundPort = server.start();
         client = HttpClient.newHttpClient();
     }
