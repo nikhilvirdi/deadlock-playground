@@ -29,9 +29,9 @@ class HistoryJumpEndpointTest {
     @BeforeEach
     void setUp() throws IOException {
         engine = new SimulationEngine();
-        server = new ApiServer(engine);
+        server = ApiTestSessions.server();
         boundPort = server.start();
-        client = HttpClient.newHttpClient();
+        client = ApiTestSessions.client(server, boundPort, engine);
         gson = new Gson();
     }
 
@@ -40,6 +40,71 @@ class HistoryJumpEndpointTest {
         if (server != null) {
             server.stop();
         }
+    }
+
+    @Test
+    void coherentViewCarriesAuthoritativeConfigurationAndRejectsJumpsFromReplacedHistory()
+            throws IOException, InterruptedException {
+        String scenario = """
+                {
+                  "name": "Same configuration shape",
+                  "resources": [{"id":"R1","total":1},{"id":"R2","total":1}],
+                  "processes": [
+                    {"id":"P","priority":2,"operations":[
+                      {"type":"REQUEST","resource":"%1$s"},{"type":"RELEASE","resource":"%1$s"}
+                    ]}
+                  ]
+                }
+                """;
+        assertEquals(200, postJson("/api/scenario", scenario.formatted("R1")).statusCode());
+        JsonObject mutation = readData(postJson("/api/step", "{}"));
+        JsonObject original = readData(sendGet("/api/history?view=true"));
+        assertEquals(mutation.get("revision"), original.get("revision"));
+        assertEquals(mutation.get("serverId"), original.get("serverId"));
+        assertEquals(mutation.get("state"), original.get("state"));
+        JsonObject state = original.getAsJsonObject("state");
+        int step = state.get("step").getAsInt();
+        assertEquals(step, original.getAsJsonArray("events").get(step).getAsJsonObject().get("seq").getAsInt());
+        assertEquals("R1", state.getAsJsonArray("processes").get(0).getAsJsonObject()
+                .getAsJsonArray("operations").get(0).getAsJsonObject().get("resource").getAsString());
+
+        assertEquals(200, postJson("/api/scenario", scenario.formatted("R2")).statusCode());
+        assertEquals(200, postJson("/api/step", "{}").statusCode());
+        JsonObject replacement = readData(sendGet("/api/history?view=true"));
+        JsonObject newState = replacement.getAsJsonObject("state");
+        assertTrue(newState.getAsJsonObject("scenario").get("configurationRevision").getAsLong()
+                > state.getAsJsonObject("scenario").get("configurationRevision").getAsLong());
+        assertEquals(step, newState.get("step").getAsInt());
+        assertEquals("R2", newState.getAsJsonArray("processes").get(0).getAsJsonObject()
+                .getAsJsonArray("operations").get(0).getAsJsonObject().get("resource").getAsString());
+
+        String request = """
+                {"seq":0,"from":"%s:%s"}
+                """;
+        HttpResponse<String> stale = postJson("/api/history/jump",
+                request.formatted(original.get("serverId").getAsString(), original.get("revision").getAsLong()));
+        assertEquals(409, stale.statusCode());
+        assertEquals("STALE_VIEW", gson.fromJson(stale.body(), JsonObject.class)
+                .getAsJsonObject("error").get("code").getAsString());
+        assertEquals(replacement, readData(sendGet("/api/history?view=true")));
+
+        JsonObject jumped = readData(postJson("/api/history/jump",
+                request.formatted(replacement.get("serverId").getAsString(), replacement.get("revision").getAsLong())));
+        assertEquals(0, jumped.getAsJsonObject("state").get("step").getAsInt());
+        assertTrue(jumped.get("revision").getAsLong() > replacement.get("revision").getAsLong());
+        assertEquals(replacement.get("events"), readData(sendGet("/api/history?view=true")).get("events"));
+
+        JsonObject reset = readData(postJson("/api/reset", "{\"confirmed\":true}"));
+        JsonObject empty = readData(sendGet("/api/history?view=true"));
+        assertEquals(reset.get("revision"), empty.get("revision"));
+        assertTrue(empty.get("state").isJsonNull());
+        assertTrue(empty.getAsJsonArray("events").isEmpty());
+        assertFalse(readData(sendGet("/api/history")).has("state"));
+    }
+
+    private JsonObject readData(HttpResponse<String> response) {
+        assertEquals(200, response.statusCode());
+        return gson.fromJson(response.body(), JsonObject.class).getAsJsonObject("data");
     }
 
     @Test

@@ -25,39 +25,74 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import static com.deadlocksim.engine.SimulationException.Kind.*;
 
 public class SimulationEngine {
     private Scenario scenario;
     final History history;
-    private Snapshot initialSnapshot;
+    private final History stagedHistory = new History();
+    private final List<EventDescription> eventsToRecord = new ArrayList<>();
     private int viewedSeq;
+    private long revision;
+    private long configurationRevision;
+
+    private record EventDescription(EventType type, String description) {}
 
     public SimulationEngine() {
-        this.scenario = null;
         this.history = new History();
-        this.initialSnapshot = null;
-        this.viewedSeq = 0;
-    }
-
-    private void updateViewedSeq() {
-        if (this.history.size() > 0) {
-            this.viewedSeq = this.history.events().get(this.history.size() - 1).getSequence();
-        }
-    }
-
-    private void checkTruncateBeforeAction() {
-        if (this.history.size() > 0) {
-            int newestSeq = this.history.events().get(this.history.size() - 1).getSequence();
-            if (this.viewedSeq < newestSeq) {
-                this.history.truncateAfter(this.viewedSeq);
-            }
-        }
     }
 
     public int getViewedSeq() {
         return viewedSeq;
+    }
+
+    public long getRevision() {
+        return revision;
+    }
+
+    public long getConfigurationRevision() {
+        return configurationRevision;
+    }
+
+    private <T> T command(Supplier<T> action) {
+        Snapshot previous = Snapshot.capture(scenario);
+        try {
+            T result = action.get();
+            if (!eventsToRecord.isEmpty() && eventsToRecord.stream().noneMatch(event -> event.type() == EventType.DETECT)
+                    && scenario.getProcesses().stream().anyMatch(Process::isDeadlocked)) {
+                inspectDeadlock();
+            }
+            checkpoint();
+            if (stagedHistory.size() > 0) {
+                history.truncateAfter(viewedSeq);
+                for (HistoryEvent event : stagedHistory.events()) {
+                    history.add(event.getType(), event.getDescription(), event.getSnapshot());
+                }
+                viewedSeq = history.size() - 1;
+                revision++;
+            } else {
+                previous.restoreInto(scenario);
+            }
+            return result;
+        } catch (RuntimeException error) {
+            previous.restoreInto(scenario);
+            throw error;
+        } finally {
+            eventsToRecord.clear();
+            stagedHistory.clear();
+        }
+    }
+
+    private void checkpoint() {
+        if (eventsToRecord.isEmpty()) return;
+        // Labels for one transition share the state after all its wake-ups.
+        Snapshot state = Snapshot.capture(scenario);
+        for (EventDescription event : eventsToRecord) {
+            stagedHistory.add(event.type(), event.description(), state);
+        }
+        eventsToRecord.clear();
     }
 
     public void configure(Scenario s) {
@@ -69,11 +104,12 @@ public class SimulationEngine {
             throw new IllegalArgumentException(String.join("; ", errors));
         }
 
+        Snapshot initial = Snapshot.capture(s);
         this.scenario = s;
-        this.initialSnapshot = Snapshot.capture(s);
         this.history.clear();
-        this.history.add(EventType.STATE_CHANGE, "Scenario loaded", this.initialSnapshot);
-        updateViewedSeq();
+        this.history.add(EventType.STATE_CHANGE, "Scenario loaded", initial);
+        this.viewedSeq = 0;
+        this.configurationRevision = ++revision;
     }
 
     public void reset(boolean confirmed) {
@@ -85,14 +121,14 @@ public class SimulationEngine {
         }
 
         this.scenario = null;
-        this.initialSnapshot = null;
         this.history.clear();
         this.viewedSeq = 0;
+        revision++;
     }
 
     public RequestResult request(String processId, String resourceId, int count) {
         Process process = requireProcess(processId);
-        return request(process, new PendingRequest(resourceId, count, Map.of(resourceId, count), -1, 0));
+        return command(() -> request(process, new PendingRequest(resourceId, count, Map.of(resourceId, count), -1, 0)));
     }
 
     private RequestResult request(Process process, PendingRequest request) {
@@ -156,14 +192,12 @@ public class SimulationEngine {
                         request.operationIndex(), request.operationCount());
             }
 
-            checkTruncateBeforeAction();
             if (returnHoldings) scenario.releaseAll(process);
             queue(process, request);
             String description = "Process " + process.getId() + " blocked waiting for " + describeDemand(request);
             if (returnHoldings) description += " after returning its holdings";
             record(EventType.BLOCK, description);
             if (returnHoldings) wakeWaitingProcesses();
-            updateViewedSeq();
             if (!process.isWaiting()) {
                 return new RequestResult(RequestOutcome.GRANTED, "Granted " + describeDemand(request) + " to " + process.getId());
             }
@@ -171,18 +205,15 @@ public class SimulationEngine {
         }
 
         SafetyResult safety = scenario.isBankersAvoidance() ? SafetyChecker.check(scenario, process, request.demand()) : null;
-        checkTruncateBeforeAction();
         if (safety != null && !safety.isSafe()) {
             queue(process, request);
             record(EventType.AVOIDANCE_CHECK, safety.getReason());
-            updateViewedSeq();
             return new RequestResult(RequestOutcome.DENIED_UNSAFE, safety.getReason(), safety);
         }
 
         String description = "Granted " + describeDemand(request) + " to " + process.getId();
         grant(process, request, description, safety);
         if (process.isTerminal()) wakeWaitingProcesses();
-        updateViewedSeq();
         return new RequestResult(RequestOutcome.GRANTED, description, safety);
     }
 
@@ -203,14 +234,12 @@ public class SimulationEngine {
     }
 
     private RequestResult rejectPrevention(Process process, int operationIndex, String reason) {
-        checkTruncateBeforeAction();
         if (operationIndex >= 0) {
             new Terminate().apply(scenario, process);
             reason += ". Stopped " + process.getId() + "'s script and released its holdings";
+            record(EventType.BLOCK, reason);
+            wakeWaitingProcesses();
         }
-        record(EventType.BLOCK, reason);
-        if (process.isTerminal()) wakeWaitingProcesses();
-        updateViewedSeq();
         return new RequestResult(RequestOutcome.REJECTED_PREVENTION, reason);
     }
 
@@ -247,7 +276,8 @@ public class SimulationEngine {
     }
 
     public ReleaseResult release(String processId, String resourceId, int count) {
-        return release(requireProcess(processId), resourceId, count, false);
+        Process process = requireProcess(processId);
+        return command(() -> release(process, resourceId, count, false));
     }
 
     private ReleaseResult release(Process process, String resourceId, int count, boolean scripted) {
@@ -258,17 +288,15 @@ public class SimulationEngine {
             throw new SimulationException(NOT_HELD, "Process " + process.getId() + " holds only " + held + " of " + resourceId);
         }
 
-        checkTruncateBeforeAction();
         scenario.release(process, resource, count);
         boolean completed = finishOperations(process, scripted ? 1 : 0);
         record(EventType.RELEASE, "Process " + process.getId() + " released " + count + " of " + resourceId);
         if (completed) record(EventType.STATE_CHANGE, process.getId() + " completed and released all holdings");
         List<String> unblocked = wakeWaitingProcesses();
-        updateViewedSeq();
         return new ReleaseResult(unblocked);
     }
 
-    List<String> wakeWaitingProcesses() {
+    private List<String> wakeWaitingProcesses() {
         List<String> unblocked = new ArrayList<>();
         boolean completed;
         do {
@@ -307,8 +335,10 @@ public class SimulationEngine {
         requireScenario();
         for (Process process : scenario.getProcesses()) {
             if (process.getState() != ProcessState.RUNNING || !hasPendingOperations(process)) continue;
-            String description = executeOperation(process);
-            return new StepResult(description, scenario.getProcesses().stream().noneMatch(this::hasPendingOperations));
+            return command(() -> {
+                String description = executeOperation(process);
+                return new StepResult(description, scenario.getProcesses().stream().noneMatch(this::hasPendingOperations));
+            });
         }
         return scenario.getProcesses().stream().noneMatch(this::hasPendingOperations)
                 ? new StepResult("Scenario finished", true)
@@ -360,32 +390,36 @@ public class SimulationEngine {
     }
 
     private void record(EventType type, String description) {
-        history.add(type, description, Snapshot.capture(scenario));
+        eventsToRecord.add(new EventDescription(type, description));
     }
 
     public DetectReport detect() {
         requireScenario();
-        if (scenario.getProcesses().stream().noneMatch(Process::isWaiting)) {
-            throw new SimulationException(NO_DEADLOCK, "No waiting process to check");
-        }
-        checkTruncateBeforeAction();
-        DetectReport report = detectCurrentState();
-        updateViewedSeq();
-        return report;
+        return command(this::detectCurrentState);
     }
 
     private DetectReport detectCurrentState() {
+        DetectReport report = inspectDeadlock();
+        DetectionResult result = report.result();
+        record(EventType.DETECT, result.isDeadlocked() ? "Deadlock detected: " + result.getProcessIds() : "No deadlock detected");
+        return report;
+    }
+
+    private DetectReport inspectDeadlock() {
         boolean allSingle = scenario.getResources().stream().allMatch(r -> r.getTotal() == 1);
         Graph graph = new Graph(scenario);
         DetectionResult result = allSingle ? new CycleDetection().detect(graph) : new BankersDetection().detect(graph);
-        record(EventType.DETECT, result.isDeadlocked() ? "Deadlock detected: " + result.getProcessIds() : "No deadlock detected");
         return new DetectReport(allSingle ? "CYCLE" : "BANKERS", result);
     }
 
     public RecoveryReport recover(VictimPolicy policy, boolean usePreempt) {
         requireScenario();
         if (policy == null) throw new IllegalArgumentException("Victim policy must not be null");
-        DetectionResult current = detect().result();
+        return command(() -> recoverDeadlock(policy, usePreempt));
+    }
+
+    private RecoveryReport recoverDeadlock(VictimPolicy policy, boolean usePreempt) {
+        DetectionResult current = detectCurrentState().result();
         if (!current.isDeadlocked()) throw new SimulationException(NO_DEADLOCK, "No deadlock to recover from");
 
         List<RecoveryRound> rounds = new ArrayList<>();
@@ -399,6 +433,7 @@ public class SimulationEngine {
             Process victim = policy.selectVictim(eligible);
             if (!eligible.contains(victim)) break;
             record(EventType.VICTIM_SELECTED, "Victim selected: " + victim.getId());
+            checkpoint();
             String strategy;
             if (usePreempt) {
                 strategy = "PREEMPT";
@@ -416,8 +451,11 @@ public class SimulationEngine {
             current = detectCurrentState().result();
             rounds.add(new RecoveryRound(victim.getId(), strategy, !current.isDeadlocked()));
         }
-        record(EventType.RESOLVED, current.isDeadlocked() ? "Recovery failed" : "Deadlock resolved");
-        updateViewedSeq();
+        if (rounds.isEmpty()) {
+            eventsToRecord.clear();
+        } else {
+            record(EventType.RESOLVED, current.isDeadlocked() ? "Recovery failed" : "Deadlock resolved");
+        }
         return new RecoveryReport(rounds, !current.isDeadlocked());
     }
 
@@ -435,6 +473,7 @@ public class SimulationEngine {
         }
         Snapshot snapshot = history.jumpTo(seq);
         snapshot.restoreInto(scenario);
+        if (viewedSeq != seq) revision++;
         this.viewedSeq = seq;
     }
 }

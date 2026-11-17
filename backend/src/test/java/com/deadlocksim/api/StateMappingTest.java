@@ -35,9 +35,9 @@ class StateMappingTest {
     @BeforeEach
     void setUp() throws IOException {
         engine = new SimulationEngine();
-        server = new ApiServer(engine);
+        server = ApiTestSessions.server();
         boundPort = server.start();
-        client = HttpClient.newHttpClient();
+        client = ApiTestSessions.client(server, boundPort, engine);
         gson = new Gson();
     }
 
@@ -202,8 +202,8 @@ class StateMappingTest {
                 assertTrue(isCycleEdge(src, tgt));
             } else {
                 notInCycleCount++;
-                assertEquals("R3", src);
-                assertEquals("P3", tgt);
+                assertEquals("resource:R3", src);
+                assertEquals("process:P3", tgt);
             }
         }
 
@@ -233,10 +233,10 @@ class StateMappingTest {
     }
 
     private static boolean isCycleEdge(String source, String target) {
-        return (source.equals("P1") && target.equals("R2"))
-                || (source.equals("R2") && target.equals("P2"))
-                || (source.equals("P2") && target.equals("R1"))
-                || (source.equals("R1") && target.equals("P1"));
+        return (source.equals("process:P1") && target.equals("resource:R2"))
+                || (source.equals("resource:R2") && target.equals("process:P2"))
+                || (source.equals("process:P2") && target.equals("resource:R1"))
+                || (source.equals("resource:R1") && target.equals("process:P1"));
     }
 
     private static JsonObject findById(JsonArray array, String id) {

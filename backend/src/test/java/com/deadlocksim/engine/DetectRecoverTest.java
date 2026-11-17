@@ -84,15 +84,16 @@ class DetectRecoverTest {
     }
 
     @Test
-    void detectWithNoWaitingProcessThrowsIllegalStateException() {
+    void detectWithNoWaitingProcessRecordsSuccessfulNegativeResult() {
         SimulationEngine engine = new SimulationEngine();
         Scenario scenario = new Scenario("No Waiting");
         scenario.addProcess(new Process("P1", 1));
         scenario.addResource(new Resource("R1", 1, false));
         engine.configure(scenario);
 
-        IllegalStateException ex = assertThrows(IllegalStateException.class, engine::detect);
-        assertEquals("No waiting process to check", ex.getMessage());
+        assertFalse(engine.detect().result().isDeadlocked());
+        assertEquals(EventType.DETECT, engine.getHistoryEvents().get(engine.getViewedSeq()).getType());
+        assertEquals("No deadlock detected", engine.getHistoryEvents().get(engine.getViewedSeq()).getDescription());
     }
 
     @Test

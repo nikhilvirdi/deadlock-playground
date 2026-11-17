@@ -18,6 +18,7 @@ import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 
@@ -91,6 +92,7 @@ public class JsonMapper {
         JsonObject scenarioObj = new JsonObject();
         scenarioObj.addProperty("name", scenario.getName());
         scenarioObj.addProperty("bankersAvoidance", scenario.isBankersAvoidance());
+        scenarioObj.addProperty("configurationRevision", engine.getConfigurationRevision());
         root.add("scenario", scenarioObj);
 
         root.addProperty("step", engine.getViewedSeq());
@@ -134,6 +136,16 @@ public class JsonMapper {
                 procObj.add("waitingFor", JsonNull.INSTANCE);
             }
 
+            JsonArray operations = new JsonArray();
+            for (Operation operation : scenario.getOperations(p.getId())) {
+                JsonObject item = new JsonObject();
+                item.addProperty("type", operation.getType().name());
+                item.addProperty("resource", operation.getResourceId());
+                item.addProperty("count", operation.getCount());
+                operations.add(item);
+            }
+            procObj.add("operations", operations);
+
             int pending = p.isTerminal() ? 0 : Math.max(0, scenario.getOperations(p.getId()).size() - p.getNextOperationIndex());
             procObj.addProperty("pendingOperations", pending);
 
@@ -154,28 +166,28 @@ public class JsonMapper {
         root.add("resources", resourcesArray);
 
         Graph graph = new Graph(scenario);
-        Set<Graph.Edge> cycleEdges = graph.cycleEdges();
+        List<Graph.Edge> edges = graph.edges();
+        Set<Graph.Edge> cycleEdges = Graph.cycleEdges(edges);
+        Set<String> detected = new HashSet<>();
+        for (Process process : scenario.getProcesses()) {
+            if (process.isDeadlocked()) detected.add(process.getId());
+        }
+        boolean singleInstance = scenario.getResources().stream().allMatch(resource -> resource.getTotal() == 1);
 
         JsonObject graphObj = new JsonObject();
         JsonArray nodesArray = new JsonArray();
 
-        for (Process p : scenario.getProcesses()) {
+        for (Graph.Node vertex : graph.nodes()) {
             JsonObject node = new JsonObject();
             JsonObject data = new JsonObject();
-            data.addProperty("id", p.getId());
-            data.addProperty("label", p.getId());
-            data.addProperty("type", "process");
-            node.add("data", data);
-            nodesArray.add(node);
-        }
-
-        for (Resource r : scenario.getResources()) {
-            JsonObject node = new JsonObject();
-            JsonObject data = new JsonObject();
-            data.addProperty("id", r.getId());
-            data.addProperty("label", r.getName());
-            data.addProperty("type", "resource");
-            data.addProperty("instances", r.getTotal());
+            data.addProperty("id", vertex.id());
+            data.addProperty("label", vertex.label());
+            data.addProperty("type", vertex.kind().type());
+            if (vertex.kind() == Graph.NodeKind.PROCESS) {
+                data.addProperty("deadlocked", detected.contains(vertex.label()));
+            } else {
+                data.addProperty("instances", scenario.resource(vertex.label()).getTotal());
+            }
             node.add("data", data);
             nodesArray.add(node);
         }
@@ -183,15 +195,18 @@ public class JsonMapper {
 
         JsonArray edgesArray = new JsonArray();
         int edgeSeq = 1;
-        for (Graph.Edge edge : graph.edges()) {
+        for (Graph.Edge edge : edges) {
             JsonObject edgeObj = new JsonObject();
             JsonObject data = new JsonObject();
-            data.addProperty("id", "e" + edgeSeq++);
-            data.addProperty("source", edge.getFrom());
-            data.addProperty("target", edge.getTo());
-            data.addProperty("kind", edge.getKind().name().toLowerCase());
+            data.addProperty("id", "edge:" + edgeSeq++);
+            data.addProperty("source", edge.source().id());
+            data.addProperty("target", edge.target().id());
+            data.addProperty("kind", edge.getKind().name().toLowerCase(Locale.ROOT));
             boolean inCycle = cycleEdges.contains(edge);
+            data.addProperty("count", edge.getCount());
             data.addProperty("inCycle", inCycle);
+            Graph.Node process = edge.getKind() == Graph.EdgeKind.REQUEST ? edge.source() : edge.target();
+            data.addProperty("deadlocked", singleInstance && inCycle && detected.contains(process.label()));
             edgeObj.add("data", data);
             edgesArray.add(edgeObj);
         }

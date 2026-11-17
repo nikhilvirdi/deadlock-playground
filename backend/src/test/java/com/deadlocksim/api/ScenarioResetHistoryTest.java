@@ -30,9 +30,9 @@ class ScenarioResetHistoryTest {
     @BeforeEach
     void setUp() throws IOException {
         engine = new SimulationEngine();
-        server = new ApiServer(engine);
+        server = ApiTestSessions.server();
         boundPort = server.start();
-        client = HttpClient.newHttpClient();
+        client = ApiTestSessions.client(server, boundPort, engine);
         gson = new Gson();
     }
 

@@ -145,7 +145,7 @@ class GraphTest {
         scenario.addProcess(new Process("P1", 1));
 
         Graph graph = new Graph(scenario);
-        assertThrows(UnsupportedOperationException.class, () -> graph.nodes().add("P2"));
+        assertThrows(UnsupportedOperationException.class, () -> graph.nodes().add(new Graph.Node(Graph.NodeKind.PROCESS, "P2")));
         assertThrows(UnsupportedOperationException.class, () ->
                 graph.edges().add(new Graph.Edge("P1", "R1", Graph.EdgeKind.REQUEST, 1)));
     }
