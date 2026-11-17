@@ -1,13 +1,13 @@
-import { configureScenario, savedScenarioOperations } from '../api/endpoints.js';
-import { showError, clearError } from './feedback.js';
+import { configureScenario } from '../api/endpoints.js';
+import { showError, clearError, clearSimulationFeedback } from './feedback.js';
 
-export function renderConfigureForm(container, onConfigured, state) {
+export function renderConfigureForm(container, runCommand, state) {
     if (!container) {
         return;
     }
 
     container.querySelector('#form-configure')?.remove();
-    const active = state?.state ?? state;
+    const active = state;
 
     const form = document.createElement('form');
     form.id = 'form-configure';
@@ -199,7 +199,13 @@ export function renderConfigureForm(container, onConfigured, state) {
     opsTextarea.setAttribute('aria-labelledby', opsHeading.id);
     opsTextarea.rows = 4;
     opsTextarea.placeholder = 'P1 REQUEST R1 1\nP1 RELEASE R1 1';
-    opsTextarea.value = savedScenarioOperations(active);
+    if (active?.processes?.every(process => Array.isArray(process.operations))) {
+        const formatId = id => /[\s"]/.test(id) ? JSON.stringify(id) : id;
+        opsTextarea.value = active.processes.flatMap(process => process.operations.map(operation =>
+            `${formatId(process.id)} ${operation.type} ${formatId(operation.resource)} ${operation.count}`)).join('\n');
+    } else if (active) {
+        opsTextarea.placeholder = "The simulator did not supply this scenario's operation definitions.";
+    }
     opsGroup.appendChild(opsTextarea);
 
     const avoidanceLabel = document.createElement('label');
@@ -332,11 +338,18 @@ export function renderConfigureForm(container, onConfigured, state) {
             if (!line) {
                 continue;
             }
-            const words = line.split(/\s+/);
-            if (words.length !== 4) {
-                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': must have exactly four words.' };
+            const words = /^("(?:[^"\\]|\\.)*"|[^\s"]+)\s+(\S+)\s+("(?:[^"\\]|\\.)*"|[^\s"]+)\s+(\S+)$/.exec(line);
+            if (!words) {
+                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': must contain a process, action, resource, and count.' };
             }
-            const [procId, opTypeRaw, resId, countStr] = words;
+            const [, processToken, opTypeRaw, resourceToken, countStr] = words;
+            let procId, resId;
+            try {
+                procId = processToken.startsWith('"') ? JSON.parse(processToken) : processToken;
+                resId = resourceToken.startsWith('"') ? JSON.parse(resourceToken) : resourceToken;
+            } catch {
+                return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': invalid quoted identifier.' };
+            }
             if (!processIds.has(procId)) {
                 return { field: opsTextarea, error: 'Operation line ' + lineIndex + ': process ' + procId + ' does not exist.' };
             }
@@ -406,11 +419,8 @@ export function renderConfigureForm(container, onConfigured, state) {
         }
 
         try {
-            const data = await configureScenario(parsed.body, opsTextarea.value);
-            const state = (data && data.state) ? data.state : data;
-            if (typeof onConfigured === 'function') {
-                onConfigured(state);
-            }
+            clearSimulationFeedback();
+            await runCommand(() => configureScenario(parsed.body));
         } catch (err) {
             showError('cfg-error-line', err);
             errorLine.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -418,19 +428,18 @@ export function renderConfigureForm(container, onConfigured, state) {
     });
 
     container.appendChild(form);
-    syncPreventionToggles(active);
+    syncPreventionToggles(form, active);
 }
 
-export function syncPreventionToggles(state) {
-    const actualState = (state && state.state) ? state.state : state;
-    const avoidanceInput = document.getElementById('cfg-bankers-avoidance');
+function syncPreventionToggles(form, state) {
+    const avoidanceInput = form.querySelector('#cfg-bankers-avoidance');
     if (avoidanceInput) {
-        avoidanceInput.checked = Boolean(actualState?.scenario?.bankersAvoidance);
+        avoidanceInput.checked = Boolean(state?.scenario?.bankersAvoidance);
     }
-    const prev = (actualState && actualState.prevention) ? actualState.prevention : null;
+    const prev = state?.prevention;
     const keys = ['mutualExclusion', 'holdAndWait', 'noPreemption', 'circularWait'];
     for (const key of keys) {
-        const el = document.getElementById('cfg-prev-' + key);
+        const el = form.querySelector('#cfg-prev-' + key);
         if (el) {
             el.checked = Boolean(prev && prev[key]);
         }

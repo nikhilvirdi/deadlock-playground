@@ -89,17 +89,6 @@ body {
   box-sizing: border-box;
 }
 
-.header-badge {
-  font-family: var(--font-mono);
-  font-size: 0.8125rem;
-  color: var(--color-text-muted);
-  background-color: #ffffff;
-  border: 1px solid var(--color-border);
-  padding: 0.35rem 0.75rem;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
-}
-
 h1,
 h2,
 h3,
@@ -299,36 +288,6 @@ a:focus-visible,
   text-align: center;
   overflow-wrap: anywhere;
   pointer-events: none;
-}
-
-.graph-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.graph-controls button {
-  font-family: var(--font-ui);
-  font-size: 14px;
-  font-weight: 500;
-  padding: 0.25rem 0.6rem;
-  line-height: 1.2;
-  border: 1px solid var(--color-border);
-  background-color: #ffffff;
-  color: var(--color-text);
-  border-radius: var(--radius-sm);
-  box-shadow: none;
-  cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
-}
-
-.graph-controls button:hover {
-  background-color: #f2f2f2;
-  border-color: #b8b8b8;
-}
-
-.graph-controls button:active {
-  background-color: #c9c9c9;
 }
 
 #history-heading {
@@ -573,12 +532,6 @@ a:focus-visible,
   grid-column: 1 / -1;
 }
 
-.prevention-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 0.18rem;
-}
-
 .prevention-toggles,
 #form-configure .prevention-toggles {
   display: flex;
@@ -603,18 +556,6 @@ a:focus-visible,
   accent-color: var(--color-focus);
 }
 
-.controls-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.controls-grid .btn-primary {
-  width: 100%;
-}
-
 .btn-primary,
 #btn-submit-configure {
   background-color: var(--color-text);
@@ -632,7 +573,6 @@ a:focus-visible,
   background-color: #555555;
 }
 
-.feedback-error,
 .error-line {
   border-inline-start: 2px solid var(--color-text);
   padding-inline-start: 0.35rem;
@@ -710,24 +650,8 @@ a:focus-visible,
   display: none;
 }
 
-/* Learning Page Typography */
-.learning-page,
-.learning-content {
-  font-family: var(--font-read);
-  font-size: 16px;
-  line-height: 1.6;
-}
-
-.learning-page h1,
-.learning-page h2,
-.learning-title {
-  font-family: var(--font-display);
-}
-
-/* Detect, Recover and Reset Controls */
-.detect-group,
-.recover-group,
-.reset-group {
+/* Recover Controls */
+.recover-group {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
@@ -735,7 +659,6 @@ a:focus-visible,
   padding-top: 0;
 }
 
-.detect-group:first-child,
 .simulation-actions:first-child,
 .form-group:first-child {
   margin-top: 0;

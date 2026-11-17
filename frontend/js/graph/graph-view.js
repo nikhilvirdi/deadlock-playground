@@ -1,60 +1,89 @@
 let cy = null;
-let currentProcesses = [];
 let resizeObserver = null;
+let latestState = null;
+let loading;
+let dependenciesReady = false;
+let dependenciesFailed = false;
 
-if (typeof cytoscape !== 'undefined' && typeof cytoscapeDagre !== 'undefined') {
-    cytoscape.use(cytoscapeDagre);
-}
+const libraries = [
+    'cytoscape-3.30.2.min.js',
+    'dagre-0.8.5.min.js',
+    'cytoscape-dagre-2.5.0.js'
+];
 
-function getEdgeCount(ele) {
-    const rawCount = ele.data('count');
-    if (typeof rawCount === 'number') {
-        return rawCount;
+async function loadLibraries() {
+    for (const file of libraries) {
+        await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = new URL('../../vendor/' + file, import.meta.url).href;
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.append(script);
+        });
     }
-    const source = ele.data('source');
-    const target = ele.data('target');
-    const kind = ele.data('kind');
-
-    if (kind === 'request') {
-        const proc = currentProcesses.find(p => p.id === source);
-        if (proc && proc.waitingFor && proc.waitingFor.resource === target) {
-            return proc.waitingFor.count;
-        }
-    } else if (kind === 'allocation') {
-        const proc = currentProcesses.find(p => p.id === target);
-        if (proc && Array.isArray(proc.held)) {
-            const entry = proc.held.find(h => h.resource === source);
-            if (entry) {
-                return entry.count;
-            }
-        }
+    if (typeof globalThis.cytoscape !== 'function' || typeof globalThis.dagre?.layout !== 'function'
+        || typeof globalThis.cytoscape('layout', 'dagre') !== 'function') {
+        throw new Error('Graph libraries failed to initialize');
     }
-    return 1;
 }
 
-function isProcessDeadlocked(ele) {
-    const proc = currentProcesses.find(p => p.id === ele.data('id'));
-    return proc ? Boolean(proc.deadlocked) : false;
-}
-
-export function getCy() {
-    return cy;
+function showUnavailable() {
+    resizeObserver?.disconnect();
+    resizeObserver = null;
+    const previous = cy;
+    cy = null;
+    window.cy = null;
+    document.getElementById('graph-canvas').hidden = true;
+    const status = document.getElementById('graph-empty');
+    status.textContent = 'Graph visualization is unavailable.';
+    status.hidden = false;
+    try {
+        previous?.destroy();
+    } catch {
+        // The graph is already hidden even if the renderer cannot tear down cleanly.
+    }
 }
 
 export function renderGraph(state) {
+    latestState = state;
     const container = document.getElementById('graph-canvas');
-    if (!container) {
+    if (!container || dependenciesFailed) return;
+    if (!dependenciesReady) {
+        loading ??= loadLibraries().then(() => {
+            dependenciesReady = true;
+            renderGraph(latestState);
+        }).catch(() => {
+            dependenciesFailed = true;
+            showUnavailable();
+        });
         return;
     }
+    try {
+        container.hidden = false;
+        const status = document.getElementById('graph-empty');
+        status.textContent = 'Configure a scenario to display the Resource Allocation Graph.';
+        status.hidden = Boolean(state?.scenario);
+        if (state && !state.graph) throw new Error('Graph data is missing');
+        drawGraph(container, state?.graph);
+    } catch {
+        showUnavailable();
+    }
+}
 
-    const actualState = (state && state.state) ? state.state : state;
-    document.getElementById('graph-empty').hidden = Boolean(actualState && actualState.scenario);
+function drawGraph(container, graph) {
+    const { nodes, edges } = graph ?? { nodes: [], edges: [] };
+    const nodeIds = new Set(nodes.map(node => node.data.id));
+    const allIds = new Set([...nodeIds, ...edges.map(edge => edge.data.id)]);
+    if (nodes.some(({ data }) => typeof data.id !== 'string' || typeof data.label !== 'string'
+        || !['process', 'resource'].includes(data.type))
+        || allIds.size !== nodes.length + edges.length
+        || edges.some(({ data }) => typeof data.id !== 'string' || !nodeIds.has(data.source) || !nodeIds.has(data.target)
+            || !Number.isInteger(data.count) || data.count <= 0 || !['request', 'allocation'].includes(data.kind))) {
+        throw new Error('Malformed graph elements');
+    }
 
     if (!cy) {
-        if (typeof cytoscape !== 'undefined' && typeof cytoscapeDagre !== 'undefined') {
-            cytoscape.use(cytoscapeDagre);
-        }
-        cy = cytoscape({
+        cy = globalThis.cytoscape({
             container,
             elements: [],
             style: [
@@ -79,15 +108,15 @@ export function renderGraph(state) {
                         'shape': 'ellipse',
                         'background-color': '#ffffff',
                         'border-width': function(ele) {
-                            return isProcessDeadlocked(ele) ? 3 : 1;
+                            return ele.data('deadlocked') === true ? 3 : 1;
                         },
                         'border-color': '#000000',
                         'label': function(ele) {
-                            const id = ele.data('id');
-                            if (isProcessDeadlocked(ele)) {
-                                return `${id}\nDEADLOCKED`;
+                            const label = ele.data('label');
+                            if (ele.data('deadlocked') === true) {
+                                return `${label}\nDEADLOCKED`;
                             }
-                            return id;
+                            return label;
                         }
                     }
                 },
@@ -99,13 +128,13 @@ export function renderGraph(state) {
                         'border-width': 1,
                         'border-color': '#000000',
                         'label': function(ele) {
-                            const id = ele.data('id');
+                            const label = ele.data('label');
                             const instances = ele.data('instances');
                             if (!instances || instances <= 0) {
-                                return id;
+                                return label;
                             }
                             const dots = Array(instances).fill('\u25CF').join(' ');
-                            return `${id} ${dots}`;
+                            return `${label} ${dots}`;
                         }
                     }
                 },
@@ -124,7 +153,7 @@ export function renderGraph(state) {
                         'text-background-opacity': 1,
                         'text-background-padding': '2px',
                         'label': function(ele) {
-                            const count = getEdgeCount(ele);
+                            const count = ele.data('count');
                             return count > 1 ? String(count) : '';
                         }
                     }
@@ -144,6 +173,13 @@ export function renderGraph(state) {
                 {
                     selector: 'edge[?inCycle]',
                     style: {
+                        'line-color': '#666666',
+                        'target-arrow-color': '#666666'
+                    }
+                },
+                {
+                    selector: 'edge[?deadlocked]',
+                    style: {
                         'line-color': '#444444',
                         'width': 3,
                         'target-arrow-color': '#444444'
@@ -157,11 +193,12 @@ export function renderGraph(state) {
 
         if (!resizeObserver && typeof ResizeObserver !== 'undefined') {
             resizeObserver = new ResizeObserver(() => {
-                if (cy) {
+                if (!cy) return;
+                try {
                     cy.resize();
-                    if (cy.elements().length > 0) {
-                        cy.fit(undefined, 30);
-                    }
+                    if (cy.elements().length > 0) cy.fit(undefined, 30);
+                } catch {
+                    showUnavailable();
                 }
             });
             resizeObserver.observe(container);
@@ -170,15 +207,7 @@ export function renderGraph(state) {
 
     cy.elements().remove();
 
-    currentProcesses = actualState && Array.isArray(actualState.processes) ? actualState.processes : [];
-
-    const graph = actualState && actualState.graph;
-    const nodes = graph && Array.isArray(graph.nodes) ? graph.nodes : [];
-    const edges = graph && Array.isArray(graph.edges) ? graph.edges : [];
-
-    if (!graph || nodes.length === 0) {
-        return;
-    }
+    if (nodes.length === 0) return;
 
     const elements = cy.add([...nodes, ...edges]);
     cy.resize();

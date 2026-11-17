@@ -13,7 +13,7 @@ const requestOutcomes = new Map([
 ]);
 
 let initialized = false;
-let refreshHandler = null;
+let runCommand;
 
 let procSelect = null;
 let resSelect = null;
@@ -113,10 +113,8 @@ function createActionSection(container) {
         if (count === null) return;
 
         try {
-            const data = await requestResource(process, resource, count);
-            if (typeof refreshHandler === 'function') {
-                await refreshHandler();
-            }
+            const data = await runCommand(() => requestResource(process, resource, count));
+            if (!data) return;
             const outcome = requestOutcomes.get(data.outcome);
             const message = data.reason && (data.outcome === 'GRANTED' || data.outcome === 'BLOCKED')
                 ? data.reason
@@ -139,10 +137,8 @@ function createActionSection(container) {
         if (count === null) return;
 
         try {
-            const data = await releaseResource(process, resource, count);
-            if (typeof refreshHandler === 'function') {
-                await refreshHandler();
-            }
+            const data = await runCommand(() => releaseResource(process, resource, count));
+            if (!data) return;
             let message = `Released ${count} of ${resource} from ${process}.`;
             if (data.unblocked?.length) message += ` Unblocked ${data.unblocked.join(', ')}.`;
             showSimulationFeedback(resultLine, revision, message, 'success');
@@ -154,10 +150,8 @@ function createActionSection(container) {
     btnStep.addEventListener('click', async () => {
         const revision = clearSimulationFeedback();
         try {
-            const data = await step();
-            if (typeof refreshHandler === 'function') {
-                await refreshHandler();
-            }
+            const data = await runCommand(() => step());
+            if (!data) return;
             let description = data.executed?.description || '';
             let status = 'success';
             const outcomeCode = description.match(/: (BLOCKED|DENIED_UNSAFE|REJECTED_PREVENTION)$/)?.[1];
@@ -172,7 +166,6 @@ function createActionSection(container) {
                 status = 'warning';
             }
             if (data.finished) {
-                btnStep.disabled = true;
                 if (description !== 'Scenario finished') {
                     description = description ? `${description}. Scenario finished` : 'Scenario finished';
                 }
@@ -190,6 +183,8 @@ function updateSelectOptions(selectEl, items, idKey) {
     if (!selectEl) {
         return;
     }
+    if (selectEl.options.length === items.length
+        && items.every((item, index) => selectEl.options[index].value === item[idKey])) return;
     const currentVal = selectEl.value;
     selectEl.textContent = '';
 
@@ -206,10 +201,8 @@ function updateSelectOptions(selectEl, items, idKey) {
     }
 }
 
-export function renderActionPanel(state, onRefresh) {
-    if (typeof onRefresh === 'function') {
-        refreshHandler = onRefresh;
-    }
+export function renderActionPanel(state, onCommand, enabled) {
+    runCommand = onCommand;
 
     const panel = document.getElementById('action-panel');
     if (!panel) {
@@ -231,11 +224,7 @@ export function renderActionPanel(state, onRefresh) {
     updateSelectOptions(procSelect, processes, 'id');
     updateSelectOptions(resSelect, resources, 'id');
 
-    if (actualState && Array.isArray(actualState.processes)) {
-        const totalPending = actualState.processes.reduce((sum, p) => sum + (p.pendingOperations || 0), 0);
-        if (btnStep) btnStep.disabled = totalPending <= 0;
-    } else {
-        if (btnStep) btnStep.disabled = true;
-        if (countInput) countInput.value = '';
-    }
+    btnRequest.disabled = btnRelease.disabled = !enabled || processes.length === 0 || resources.length === 0;
+    btnStep.disabled = !enabled || !processes.some(process => process.state === 'RUNNING' && process.pendingOperations > 0);
+    if (!actualState) countInput.value = '';
 }

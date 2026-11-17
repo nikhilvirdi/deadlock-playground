@@ -9,7 +9,7 @@ export class ApiError extends Error {
 }
 
 export async function request(method, path, body = undefined) {
-    const options = { method };
+    const options = { method, cache: 'no-store' };
     if (body !== undefined && body !== null) {
         options.headers = { 'Content-Type': 'application/json' };
         options.body = typeof body === 'string' ? body : JSON.stringify(body);

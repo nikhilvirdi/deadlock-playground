@@ -2,7 +2,7 @@ import { detect, recover, reset } from '../api/endpoints.js';
 import { clearSimulationFeedback, showSimulationError, showSimulationFeedback } from './feedback.js';
 
 let initialized = false;
-let refreshHandler = null;
+let runCommand;
 
 let btnDetect = null;
 let detectResultLine = null;
@@ -17,55 +17,7 @@ let recoverErrorLine = null;
 let btnReset = null;
 let resetErrorLine = null;
 
-function createDetectSection(container) {
-    const group = document.createElement('div');
-    group.className = 'form-group detect-group';
-
-    const btnRow = document.createElement('div');
-    btnRow.className = 'action-buttons-row';
-
-    btnDetect = document.createElement('button');
-    btnDetect.type = 'button';
-    btnDetect.id = 'btn-detect';
-    btnDetect.textContent = 'Detect';
-    btnRow.appendChild(btnDetect);
-    group.appendChild(btnRow);
-
-    detectResultLine = document.createElement('div');
-    detectResultLine.id = 'detect-result-line';
-    detectResultLine.className = 'simulation-feedback';
-    detectResultLine.setAttribute('role', 'status');
-    group.appendChild(detectResultLine);
-
-    detectErrorLine = document.createElement('div');
-    detectErrorLine.id = 'detect-error-line';
-    detectErrorLine.className = 'simulation-feedback';
-    detectErrorLine.setAttribute('role', 'status');
-    group.appendChild(detectErrorLine);
-
-    btnDetect.addEventListener('click', async () => {
-        const revision = clearSimulationFeedback();
-        try {
-            const data = await detect();
-            if (typeof refreshHandler === 'function') {
-                await refreshHandler();
-            }
-            let message = 'No deadlock detected.';
-            if (data.deadlocked) {
-                const processes = data.processes?.length ? ` in ${data.processes.join(', ')}` : '';
-                message = `Deadlock detected${processes}.`;
-                if (data.cycle?.length) message += ` Cycle: ${data.cycle.join(' → ')}.`;
-            }
-            showSimulationFeedback(detectResultLine, revision, message, data.deadlocked ? 'error' : 'success');
-        } catch (err) {
-            showSimulationError(detectErrorLine, revision, err);
-        }
-    });
-
-    container.appendChild(group);
-}
-
-function createRecoverSection(container) {
+function createDetectRecoverSection(container) {
     const group = document.createElement('div');
     group.className = 'form-group recover-group';
 
@@ -120,12 +72,37 @@ function createRecoverSection(container) {
     const btnRow = document.createElement('div');
     btnRow.className = 'action-buttons-row';
 
+    btnDetect = document.createElement('button');
+    btnDetect.type = 'button';
+    btnDetect.id = 'btn-detect';
+    btnDetect.textContent = 'Detect';
+    btnRow.appendChild(btnDetect);
+
     btnRecover = document.createElement('button');
     btnRecover.type = 'button';
     btnRecover.id = 'btn-recover';
     btnRecover.textContent = 'Recover';
     btnRow.appendChild(btnRecover);
+
+    btnReset = document.createElement('button');
+    btnReset.type = 'button';
+    btnReset.id = 'btn-reset';
+    btnReset.textContent = 'Reset';
+    btnRow.appendChild(btnReset);
+
     group.appendChild(btnRow);
+
+    detectResultLine = document.createElement('div');
+    detectResultLine.id = 'detect-result-line';
+    detectResultLine.className = 'simulation-feedback';
+    detectResultLine.setAttribute('role', 'status');
+    group.appendChild(detectResultLine);
+
+    detectErrorLine = document.createElement('div');
+    detectErrorLine.id = 'detect-error-line';
+    detectErrorLine.className = 'simulation-feedback';
+    detectErrorLine.setAttribute('role', 'status');
+    group.appendChild(detectErrorLine);
 
     recoverResultLine = document.createElement('div');
     recoverResultLine.id = 'recover-result-line';
@@ -139,16 +116,37 @@ function createRecoverSection(container) {
     recoverErrorLine.setAttribute('role', 'status');
     group.appendChild(recoverErrorLine);
 
+    resetErrorLine = document.createElement('div');
+    resetErrorLine.id = 'reset-error-line';
+    resetErrorLine.className = 'simulation-feedback';
+    resetErrorLine.setAttribute('role', 'status');
+    group.appendChild(resetErrorLine);
+
+    btnDetect.addEventListener('click', async () => {
+        const revision = clearSimulationFeedback();
+        try {
+            const data = await runCommand(() => detect());
+            if (!data) return;
+            let message = 'No deadlock detected.';
+            if (data.deadlocked) {
+                const processes = data.processes?.length ? ` in ${data.processes.join(', ')}` : '';
+                message = `Deadlock detected${processes}.`;
+                if (data.cycle?.length) message += ` Cycle: ${data.cycle.join(' → ')}.`;
+            }
+            showSimulationFeedback(detectResultLine, revision, message, data.deadlocked ? 'error' : 'success');
+        } catch (err) {
+            showSimulationError(detectErrorLine, revision, err);
+        }
+    });
+
     btnRecover.addEventListener('click', async () => {
         const revision = clearSimulationFeedback();
         const policy = policySelect.value;
         const strategy = strategySelect.value;
 
         try {
-            const data = await recover(policy, strategy);
-            if (typeof refreshHandler === 'function') {
-                await refreshHandler();
-            }
+            const data = await runCommand(() => recover(policy, strategy));
+            if (!data) return;
             const rounds = (data.rounds || []).map(round => round.strategy === 'PREEMPT'
                 ? `Preempted resources from ${round.victim}.`
                 : `Terminated ${round.victim}.`);
@@ -159,45 +157,16 @@ function createRecoverSection(container) {
         }
     });
 
-    container.appendChild(group);
-}
-
-function createResetSection(container) {
-    const group = document.createElement('div');
-    group.className = 'form-group reset-group';
-
-    const btnRow = document.createElement('div');
-    btnRow.className = 'action-buttons-row';
-
-    btnReset = document.createElement('button');
-    btnReset.type = 'button';
-    btnReset.id = 'btn-reset';
-    btnReset.textContent = 'Reset';
-    btnRow.appendChild(btnReset);
-    group.appendChild(btnRow);
-
-    resetErrorLine = document.createElement('div');
-    resetErrorLine.id = 'reset-error-line';
-    resetErrorLine.className = 'simulation-feedback';
-    resetErrorLine.setAttribute('role', 'status');
-    group.appendChild(resetErrorLine);
-
     btnReset.addEventListener('click', async () => {
         const revision = clearSimulationFeedback();
         try {
-            await reset(false);
-            if (typeof refreshHandler === 'function') {
-                await refreshHandler();
-            }
+            await runCommand(() => reset(false));
         } catch (err) {
             if (err.code === 'VALIDATION_ERROR') {
                 const confirmed = window.confirm('Reset will clear the event history. Continue?');
                 if (confirmed) {
                     try {
-                        await reset(true);
-                        if (typeof refreshHandler === 'function') {
-                            await refreshHandler();
-                        }
+                        await runCommand(() => reset(true));
                     } catch (innerErr) {
                         showSimulationError(resetErrorLine, revision, innerErr);
                     }
@@ -211,10 +180,8 @@ function createResetSection(container) {
     container.appendChild(group);
 }
 
-export function renderDetectRecoverPanel(state, onRefresh) {
-    if (typeof onRefresh === 'function') {
-        refreshHandler = onRefresh;
-    }
+export function renderDetectRecoverPanel(state, onCommand, enabled) {
+    runCommand = onCommand;
 
     const panel = document.getElementById('detect-recover-panel');
     if (!panel) {
@@ -225,9 +192,8 @@ export function renderDetectRecoverPanel(state, onRefresh) {
 
     if (!initialized) {
         container.textContent = '';
-        createDetectSection(container);
-        createRecoverSection(container);
-        createResetSection(container);
+        createDetectRecoverSection(container);
         initialized = true;
     }
+    btnDetect.disabled = btnRecover.disabled = btnReset.disabled = !enabled || !state;
 }
